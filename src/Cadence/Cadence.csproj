@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <RootNamespace>Cadence</RootNamespace>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="FluentValidation" Version="12.1.1" />
+        <PackageReference Include="Microsoft.Extensions.AI" Version="10.8.3" />
+        <PackageReference
+            Include="Microsoft.Extensions.DependencyInjection.Abstractions"
+            Version="10.0.10"
+        />
+        <PackageReference Include="Tandem" Version="$(TandemVersion)" />
+        <PackageReference Include="Tandem.Advanced" Version="$(TandemVersion)" />
+        <PackageReference
+            Include="Tandem.Generators"
+            Version="$(TandemVersion)"
+            PrivateAssets="all"
+        />
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource
+            Include="Harness/DELIVERY_HARNESS.md"
+            LogicalName="Cadence.DELIVERY_HARNESS.md"
+        />
+        <InternalsVisibleTo Include="Cadence.Tests" />
+    </ItemGroup>
+</Project>

@@ -1,0 +1,55 @@
+using Microsoft.Extensions.AI;
+using Tandem.Advanced;
+
+namespace Cadence;
+
+internal sealed class CadenceAgentFactory(
+    Func<string, IChatClient> chatClients,
+    Func<string, CadenceAgentProfile> profileResolver,
+    ICadenceRecordSink records,
+    AgentWorkspace<CadenceState> workspace
+)
+{
+    internal AgentDefinition<CadenceState> Create(
+        string participantId,
+        string profileName,
+        string instructions,
+        Func<AgentBuilder<CadenceState>, AgentBuilder<CadenceState>> configure
+    )
+    {
+        var profile = profileResolver(profileName);
+        var builder = AgentProfiles
+            .Create<CadenceState>(
+                participantId,
+                profileName,
+                instructions,
+                chatClients(profileName),
+                chatClients
+            )
+            .UseHarness(CadenceHarnessInstructions.Value)
+            .WithMessageAugmentation(
+                async (_, cancellationToken) =>
+                    CadenceLedgerContextFormatter.Format(
+                        await records.ReadContextAsync(
+                            participantId switch
+                            {
+                                CadenceIds.Executor => CadenceLedgerRole.Executor,
+                                CadenceIds.Planner => CadenceLedgerRole.Planner,
+                                CadenceIds.Reviewer => CadenceLedgerRole.Reviewer,
+                                _ => throw new InvalidOperationException(
+                                    $"Unknown Cadence agent '{participantId}'."
+                                ),
+                            },
+                            cancellationToken
+                        )
+                    )
+            );
+
+        return configure(builder).Build();
+    }
+
+    internal CadenceAgentProfile ResolveProfile(string profileName) => profileResolver(profileName);
+
+    internal ICadenceRecordSink Records => records;
+    internal AgentWorkspace<CadenceState> Workspace => workspace;
+}
