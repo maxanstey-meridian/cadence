@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Cadence.Host;
 using FluentAssertions;
+using Tandem.Packets;
 
 namespace Cadence.Tests;
 
@@ -276,15 +277,263 @@ public sealed class HostBoundaryTests
                 """
             );
 
-            var act = () => new YamlPacketReader().Read(packetPath);
+            var act = () => PacketReader.Read(packetPath);
 
-            act.Should().Throw<InvalidOperationException>().WithMessage("*non-blank*");
+            act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
         }
         finally
         {
             Directory.Delete(repository, recursive: true);
             File.Delete(packetPath);
         }
+    }
+
+    [Fact]
+    public void Packet_reader_preserves_authored_lists_and_resolves_context_and_repository()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}");
+        var repository = Path.Combine(directory, "repository");
+        Directory.CreateDirectory(repository);
+        var path = Path.Combine(directory, "packet.md");
+        try
+        {
+            var content = """
+                ---
+                title: "  Deliver behavior  "
+                repository: ./repository
+                base: "  main  "
+                outcomes:
+                  - id: " first "
+                    description: " First result "
+                  - id: second
+                    description: Second result
+                verification:
+                  - " dotnet test "
+                  - "dotnet test"
+                constraints:
+                  - " Preserve exact text "
+                ---
+
+                Inspect first.
+                Then implement.
+                """;
+            File.WriteAllText(
+                path,
+                content.Replace("Inspect first.\n", "Inspect first.\r\n", StringComparison.Ordinal)
+            );
+
+            var packet = PacketReader.Read(path);
+
+            packet.Title.Should().Be("Deliver behavior");
+            packet.Repository.Should().Be(repository);
+            packet.Base.Should().Be("main");
+            packet.Outcomes.Select(outcome => outcome.Id).Should().Equal("first", "second");
+            packet.Verification.Should().Equal(" dotnet test ", "dotnet test");
+            packet.Constraints.Should().Equal(" Preserve exact text ");
+            packet.ImplementationContext.Should().Be("Inspect first.\nThen implement.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("unknown: value")]
+    [InlineData("title: duplicate")]
+    public void Packet_reader_rejects_unknown_and_duplicate_frontmatter(string extra)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var packetPath = Path.Combine(directory, "packet.md");
+        try
+        {
+            File.WriteAllText(packetPath, ValidPacket(directory, extra));
+
+            var exception = Assert.Throws<PacketFileException>(() => PacketReader.Read(packetPath));
+
+            exception.Problems.Should().ContainSingle().Which.Path.Should().Be("$");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Packet_reader_rejects_trimmed_duplicate_outcomes()
+    {
+        var content = ValidPacket(Path.GetTempPath(), "")
+            .Replace(
+                "    description: Deliver behavior",
+                "    description: Deliver behavior\n  - id: \" outcome-1 \"\n    description: Duplicate",
+                StringComparison.Ordinal
+            );
+
+        var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+
+        act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
+    }
+
+    [Fact]
+    public void Packet_reader_defaults_omitted_constraints_to_empty()
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
+        try
+        {
+            File.WriteAllText(packetPath, ValidPacket(repository, ""));
+
+            PacketReader.Read(packetPath).Constraints.Should().BeEmpty();
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+            File.Delete(packetPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("outcomes")]
+    [InlineData("verification")]
+    public void Packet_reader_reports_missing_required_lists_without_validator_fault(string field)
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var content = ValidPacket(repository, "");
+        var start = content.IndexOf($"{field}:", StringComparison.Ordinal);
+        var end =
+            field == "outcomes"
+                ? content.IndexOf("verification:", start, StringComparison.Ordinal)
+                : content.IndexOf("---", start, StringComparison.Ordinal);
+        content = content.Remove(start, end - start);
+
+        try
+        {
+            var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+
+            act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("outcomes:\n  - null", "Packet outcomes must not contain null values.")]
+    [InlineData(
+        "constraints:\n  - null",
+        "Packet constraints must not contain null or blank values."
+    )]
+    public void Packet_reader_reports_null_collection_elements_as_validation_failures(
+        string replacement,
+        string message
+    )
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var content = replacement.StartsWith("outcomes:", StringComparison.Ordinal)
+            ? ValidPacket(repository, "")
+                .Replace(
+                    "outcomes:\n  - id: outcome-1\n    description: Deliver behavior",
+                    replacement,
+                    StringComparison.Ordinal
+                )
+            : ValidPacket(repository, replacement);
+
+        try
+        {
+            var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+
+            act.Should()
+                .Throw<PacketFileException>()
+                .Which.Problems.Should()
+                .Contain(problem => problem.Message == message);
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Packet_reader_requires_yaml_ambiguous_commands_to_be_quoted()
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var content = ValidPacket(repository, "")
+            .Replace("  - dotnet test", "  - true", StringComparison.Ordinal);
+
+        try
+        {
+            var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+
+            act.Should()
+                .Throw<PacketFileException>()
+                .Which.Problems.Should()
+                .Contain(problem => problem.Path == "$.verification[0]");
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Checked_in_example_parses_through_the_production_reader()
+    {
+        var root = FindRepositoryRoot();
+
+        var packet = PacketReader.Read(Path.Combine(root, "examples", "packet.md"));
+
+        packet.Repository.Should().Be(root);
+        packet.Verification.Should().Equal("task check");
+        packet.ImplementationContext.Should().Contain("host boundary tests");
+    }
+
+    [Fact]
+    public async Task Invalid_packet_fails_before_configuration_and_run_directory_creation()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-cli-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var packetPath = Path.Combine(directory, "packet.md");
+        File.WriteAllText(packetPath, "not frontmatter");
+        try
+        {
+            var exitCode = await Program.Main(["run", packetPath, "--home", directory]);
+
+            exitCode.Should().Be(1);
+            Directory.Exists(Path.Combine(directory, "runs")).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static string ValidPacket(string repository, string extra) =>
+        $$"""
+            ---
+            title: Test packet
+            repository: {{repository}}
+            base: main
+            outcomes:
+              - id: outcome-1
+                description: Deliver behavior
+            verification:
+              - dotnet test
+            {{extra}}
+            ---
+            Body
+            """;
+
+    private static string FindRepositoryRoot()
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null && !File.Exists(Path.Combine(current.FullName, "Cadence.slnx")))
+        {
+            current = current.Parent;
+        }
+        return current?.FullName
+            ?? throw new InvalidOperationException("Could not find the Cadence repository root.");
     }
 
     [Fact]

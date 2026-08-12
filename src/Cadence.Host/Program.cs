@@ -85,7 +85,7 @@ internal static class Program
     )
     {
         var home = ResolveHome(explicitHome);
-        var packet = new YamlPacketReader().Read(packetPath);
+        var packet = PacketReader.Read(packetPath);
         var configurationPath = Path.GetFullPath(
             explicitConfig ?? Path.Combine(home, "config.json")
         );

@@ -128,9 +128,24 @@ constraints:
 Inspect the relevant implementation and tests before choosing the change surface.
 ```
 
-At least one outcome and one verification command are required. Packets whose outcomes
-already hold may produce an allow-empty candidate commit; they still pass complete
-verification and Reviewer inspection.
+The frontmatter is the delivery contract. `title`, `repository`, and `base` must be
+nonblank. `outcomes` is an ordered, nonempty list with unique nonblank IDs and nonblank
+descriptions. `verification` is an ordered, nonempty list of exact nonblank commands;
+duplicates remain separate checks. `constraints` is optional and its text is preserved
+exactly. Quote commands and constraints that YAML would otherwise interpret as values,
+including `true`, `false`, `null`, and numbers. Unknown fields and duplicate YAML keys
+are rejected.
+
+`repository` may be absolute or relative to the packet file. Cadence requires that the
+resolved directory exists before loading configuration or creating a run; workspace
+preparation later proves that `base` resolves in Git. The Markdown body is trimmed at
+its outer edges, normalized to `\n`, and supplied unchanged as implementation context
+to Executor, Planner, and Reviewer.
+
+Packets whose outcomes already hold may produce an allow-empty candidate commit; they
+still pass complete verification and Reviewer inspection. A packet-authoring Agent Skill
+and production-validated example live at [`skills/packet-authoring`](skills/packet-authoring)
+and [`examples/packet.md`](examples/packet.md).
 
 ## Configure
 
@@ -187,7 +202,7 @@ do not grant permission to edit the workspace or run extra commands.
 
 ## Prepare Tandem
 
-Cadence consumes `Tandem`, `Tandem.Advanced`, and `Tandem.Generators` through package
+Cadence consumes `Tandem`, `Tandem.Advanced`, `Tandem.Generators`, and `Tandem.Packets` through package
 references. Until those packages are published, refresh the ignored local feed:
 
 ```sh

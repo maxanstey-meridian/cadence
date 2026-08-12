@@ -27,6 +27,13 @@ public sealed class ArchitectureTests
             )
             .Should()
             .BeFalse();
+
+        var host = XDocument.Load(Path.Combine(root, "src", "Cadence.Host", "Cadence.Host.csproj"));
+        var hostPackages = host.Descendants("PackageReference")
+            .Select(reference => (string?)reference.Attribute("Include"))
+            .ToArray();
+        hostPackages.Should().Contain("Tandem.Packets");
+        hostPackages.Should().NotContain("YamlDotNet");
     }
 
     private static string FindRepositoryRoot()

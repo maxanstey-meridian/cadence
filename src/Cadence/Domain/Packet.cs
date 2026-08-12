@@ -9,5 +9,5 @@ public sealed record Packet(
     IReadOnlyList<PacketOutcome> Outcomes,
     IReadOnlyList<string> Verification,
     IReadOnlyList<string> Constraints,
-    string ImplementationContext
+    string ImplementationContext = ""
 );

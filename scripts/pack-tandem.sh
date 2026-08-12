@@ -12,3 +12,5 @@ dotnet pack "$TANDEM_REPOSITORY/src/Tandem/Tandem.csproj" \
   --configuration Release --output "$FEED" -p:Version="$VERSION"
 dotnet pack "$TANDEM_REPOSITORY/src/Tandem.Advanced/Tandem.Advanced.csproj" \
   --configuration Release --output "$FEED" -p:Version="$VERSION"
+dotnet pack "$TANDEM_REPOSITORY/src/Tandem.Packets/Tandem.Packets.csproj" \
+  --configuration Release --output "$FEED" -p:Version="$VERSION"
