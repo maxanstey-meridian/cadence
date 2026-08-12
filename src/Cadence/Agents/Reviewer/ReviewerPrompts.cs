@@ -104,10 +104,12 @@ public static class ReviewerPrompts
             Inspect every returned path with git_diff, following pagination until each diff is
             complete. Read every current touched file and relevant unchanged integration seam.
             Independently run every generated command run_verification_1 through
-            run_verification_{state.Packet.Verification.Count}. Accept requires every rerun to be
-            green. RequestChanges may report a red rerun using exact VerificationCommand evidence
-            for that packet command and its nonzero result. An empty changed-file result is valid, but
-            still inspect the repository-wide git_diff and existing implementation.
+            run_verification_{state.Packet.Verification.Count} after Git grounding and in packet order.
+            Exact arguments, invocation order, status, and process results are runtime-recorded. Accept
+            requires every latest rerun to be green. RequestChanges may stop at the first runtime-failed
+            command, but its Critical/High VerificationCommand evidence must reproduce that exact
+            command, exitCode, stdout, and stderr. An empty changed-file result is valid, but still
+            inspect the repository-wide git_diff and existing implementation.
 
             Return a structured JSON decision with doctrineHash exactly {doctrine.Sha256}.
             Assess every outcome ID and combined packet/Planner constraint exactly once. Evidence kinds are
@@ -142,14 +144,15 @@ public static class ReviewerPrompts
             interaction, and fake integration coverage presented as real behavior. Decide whether the
             regression coverage proves the delivered behavior.
 
-            Use git_changed_files for the exact pinned base and candidate, follow changed-file and diff
-            pagination to completion, inspect every changed path, and read relevant unchanged source,
-            tests, contracts, and configuration. Independently run every generated run_verification_N
-            command. Accept requires successful observations for every generated verification command;
-            RequestChanges may instead provide a Critical/High finding with exact VerificationCommand
-            evidence for a nonzero rerun. Tandem currently records successful
-            tool-name observations but cannot prove exact arguments, pagination completion, path
-            coverage, or semantic use; those obligations remain mandatory and prompt-enforced.
+            Use git_changed_files for the exact pinned base and candidate, then a repository-wide
+            git_diff for that range. Follow changed-file and diff pagination to completion, inspect every
+            changed path, and read relevant unchanged source, tests, contracts, and configuration.
+            Independently run every generated run_verification_N command after Git grounding and in
+            packet order. Exact arguments, invocation order, status, and process results are
+            runtime-recorded. Accept requires every latest rerun to complete successfully. RequestChanges
+            may stop at the first runtime-failed command only with a Critical/High finding whose exact
+            VerificationCommand evidence matches that runtime result. Pagination completion, changed-path
+            coverage, and semantic use remain mandatory prompt-enforced obligations.
 
             Return Accept when all outcomes and constraints hold and no Critical or High finding
             remains. Medium and Low findings may remain on Accept when genuinely non-blocking.
@@ -159,9 +162,9 @@ public static class ReviewerPrompts
             or block on taste.
 
             Use only reproducible typed evidence: file and line, symbol, exact verification command and
-            exact result, packet outcome, constraint, or an exact quoted doctrine clause. Successful
-            results are checked against deterministic pipeline results. Failed stdout/stderr are
-            prompt/model evidence because Tandem does not expose failed invocation details.
+            exact result, packet outcome, constraint, or an exact quoted doctrine clause. Deterministic
+            result evidence remains exact-match valid. Reviewer reruns are authenticated against runtime
+            invocation evidence; never invent or alter a red result.
             Every finding must identify the precise defect, quote the doctrine clause it violates, and
             cite defect proof. Assess every active Planner constraint exactly once with its exact typed
             reference. Return only one JSON object matching the response schema.

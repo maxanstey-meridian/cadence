@@ -2,7 +2,7 @@
 set -eu
 
 TANDEM_REPOSITORY=${TANDEM_REPOSITORY:-"$HOME/Sites/tandem"}
-VERSION=${TANDEM_VERSION:-"0.1.6-local"}
+VERSION=${TANDEM_VERSION:-"0.1.9-local"}
 mkdir -p "$(dirname -- "$0")/../packages"
 FEED=$(CDPATH= cd -- "$(dirname -- "$0")/../packages" && pwd)
 

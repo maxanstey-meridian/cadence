@@ -253,10 +253,22 @@ Reviewer returns one typed decision:
 
 Mechanical rules:
 
-- Every non-Human decision requires `git_changed_files` and `git_diff` observations.
-- Every generated `run_verification_N` command must be run. `Accept` requires a
-  successful observation for each. `RequestChanges` permits either a successful
-  observation or a Critical/High finding with exact nonzero command evidence.
+- Every non-Human decision requires a completed read-only `git_changed_files` call
+  with the exact pinned base and candidate SHAs, followed by a completed repository-wide
+  `git_diff` for the same range. Both must begin at the first page.
+  The latest invocation of each Git tool is authoritative, and the latest manifest
+  must precede the latest repository-wide diff.
+- Every generated `run_verification_N` command must be attempted after Git grounding
+  in packet order. The latest invocation for each command is current: later success
+  may replace failure and later failure invalidates success.
+- `Accept` requires each current attempt to be completed with process exit code zero
+  with no timeout or truncation. `RequestChanges` may stop at the first complete runtime
+  `Failed` command only when a Critical/High finding exactly reproduces that packet
+  command and runtime exit code, stdout, and stderr. Blocked and faulted attempts never
+  qualify.
+- Every `VerificationCommand` evidence reference in outcomes, constraint assessments,
+  and findings must exactly match deterministic verification results or a complete
+  runtime invocation of the corresponding declared fixed command.
 - Every packet outcome is assessed exactly once.
 - `Accept` requires every outcome to be delivered.
 - Every finding is grounded in an exact doctrine clause and reproducible defect evidence.
@@ -385,6 +397,7 @@ Tandem supplies generic pipeline mechanics:
 - Typed Human interactions.
 - Deterministic stages.
 - Observation and persistence.
+- Bounded local-process execution through Advanced `LocalProcess`.
 
 Cadence owns coding-pipeline semantics:
 
@@ -394,7 +407,7 @@ Cadence owns coding-pipeline semantics:
 - Outcome ledger and report contract.
 - Five-minute dirty-work continuity policy.
 - Candidate capture and git policy.
-- Verification policy.
+- Git workflows, platform shell selection, and verification policy.
 - Review contract and repair limit.
 - Publication semantics.
 
@@ -445,13 +458,13 @@ useful hardening, but it is not required to implement Cadence's initial pipeline
 Do not introduce generic coding-specific concepts into Tandem Core without a
 second demonstrated consumer.
 
-Tandem currently records successful Git/read and generated command tool names but does not prove exact
-arguments, pagination completion, changed-path coverage, or semantic use. Those Git
-obligations remain prompt-enforced. Successful generated commands are observable by
-name. Failed generated invocations do not expose their result details, so Reviewer
-red stdout/stderr is explicitly prompt/model evidence checked against the exact
-declared packet command. Typed file-line and symbol evidence validates shape, not
-repository existence; that also remains prompt-enforced.
+Tandem records ordered invocation arguments, statuses, and fixed-command process
+results. Cadence mechanically checks the exact Reviewer candidate range, authoritative
+latest manifest and repository-wide diff order, verification packet order, latest-attempt
+status/completeness, and every verification evidence reference. Invocation evidence does
+not prove pagination completion, use of every returned path, or semantic use; those
+obligations remain prompt-enforced. Typed file-line and symbol evidence validates shape,
+not repository existence; that also remains prompt-enforced.
 
 ## Implementation Order
 

@@ -4,3 +4,6 @@
 .vscode/
 packages/
 TestResults/
+/.cadence/
+/config.json
+/reviewer-doctrine.md

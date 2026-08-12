@@ -93,6 +93,10 @@ internal static class Program
         var reviewerDoctrine = ReviewerDoctrine.Load(
             configuration.ResolveReviewerDoctrinePath(configurationPath)
         );
+        var skills = configuration
+            .ResolveSkillDirectories(configurationPath)
+            .Select(AgentSkill.FromDirectory)
+            .ToArray();
         var runId = Guid.CreateVersion7();
         var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
         var workspace = Path.Combine(runDirectory, "workspace");
@@ -111,7 +115,8 @@ internal static class Program
                 records,
                 reviewerDoctrine,
                 timeProvider,
-                gitTimeout
+                gitTimeout,
+                skills
             )
         );
         await using var provider = services.BuildServiceProvider();

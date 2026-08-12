@@ -70,13 +70,24 @@ public sealed class PipelineBehaviorTests
         var repository = TestSupport.CreateGitRepository();
         try
         {
+            var skillDirectory = Path.Combine(repository, "skills", "meridian");
+            Directory.CreateDirectory(skillDirectory);
+            File.WriteAllText(
+                Path.Combine(skillDirectory, "SKILL.md"),
+                "---\nname: meridian\ndescription: Review doctrine.\n---\n\n# Meridian\n"
+            );
             var planner = new ScriptedChatClient(
                 "planner",
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed)),
                 Read("planner-read"),
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed))
             );
-            var participant = BuildParticipants(_ => planner).Create().Planner;
+            var participant = BuildParticipants(
+                    _ => planner,
+                    skills: [AgentSkill.FromDirectory(skillDirectory)]
+                )
+                .Create()
+                .Planner;
             var state = TestSupport.State(repository) with
             {
                 Packet = TestSupport.Packet() with { Repository = repository },
@@ -99,6 +110,32 @@ public sealed class PipelineBehaviorTests
 
             result.State.PlannerDecision!.Decision.Should().Be(PlannerDecisionValue.Proceed);
             planner.CallCount.Should().Be(3);
+            planner
+                .AdvertisedTools.SelectMany(tools => tools)
+                .Should()
+                .Contain(["load_skill", "read_skill_resource"]);
+            var advertised = planner.AdvertisedTools.SelectMany(tools => tools).ToHashSet();
+            advertised
+                .Should()
+                .Contain([
+                    "git_status",
+                    "git_diff",
+                    "git_log",
+                    "git_show",
+                    "git_blame",
+                    "git_changed_files",
+                    "git_compare",
+                ]);
+            advertised
+                .Should()
+                .NotContain([
+                    "run_verification_1",
+                    "run_shell",
+                    "file_access_write",
+                    "file_access_delete",
+                    "file_access_replace",
+                    "file_access_replace_lines",
+                ]);
         }
         finally
         {
@@ -121,7 +158,7 @@ public sealed class PipelineBehaviorTests
                 "reviewer",
                 TestSupport.Text(AcceptJson()),
                 GitChangedFiles("reviewer-changed-files", baseSha, candidateSha),
-                GitDiff("reviewer-diff", baseSha, candidateSha, "README.md"),
+                GitDiff("reviewer-diff", baseSha, candidateSha),
                 RunVerification("reviewer-verification", 1),
                 TestSupport.Text(AcceptJson())
             );
@@ -883,7 +920,8 @@ public sealed class PipelineBehaviorTests
         Func<string, IChatClient> clients,
         FakeRecordSink? records = null,
         TimeProvider? timeProvider = null,
-        Func<string, CadenceAgentProfile>? profiles = null
+        Func<string, CadenceAgentProfile>? profiles = null,
+        IReadOnlyList<AgentSkill>? skills = null
     )
     {
         records ??= new FakeRecordSink();
@@ -902,6 +940,7 @@ public sealed class PipelineBehaviorTests
             profiles,
             records,
             TestSupport.Doctrine(),
+            skills ?? [],
             new WorkspacePreparation(git),
             git,
             checkpoint,
@@ -962,7 +1001,7 @@ public sealed class PipelineBehaviorTests
             responses.Add(messages =>
             {
                 var (baseSha, candidateSha) = CandidateRange(messages);
-                return GitDiff($"diff-{Guid.NewGuid():N}", baseSha, candidateSha, "feature.txt");
+                return GitDiff($"diff-{Guid.NewGuid():N}", baseSha, candidateSha);
             });
             responses.Add(_ => RunVerification($"verification-{Guid.NewGuid():N}", 1));
             responses.Add(_ => TestSupport.Text(decision));

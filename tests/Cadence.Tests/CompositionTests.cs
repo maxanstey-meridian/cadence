@@ -24,6 +24,7 @@ public sealed class CompositionTests
             _ => new CadenceAgentProfile(200_000, 32_000, 80),
             records,
             TestSupport.Doctrine(),
+            [],
             new WorkspacePreparation(git),
             git,
             checkpointPolicy,

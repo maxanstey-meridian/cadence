@@ -1,0 +1,41 @@
+version: "3"
+
+vars:
+  SOLUTION: "{{.ROOT_DIR}}/Cadence.slnx"
+
+tasks:
+  prepare:
+    cmds:
+      - "{{.ROOT_DIR}}/scripts/pack-tandem.sh"
+
+  build:
+    cmds:
+      - dotnet build {{.SOLUTION}}
+
+  test:
+    cmds:
+      - dotnet test {{.SOLUTION}}
+
+  format:
+    cmds:
+      - dotnet tool restore
+      - dotnet csharpier format .
+      - dotnet format {{.SOLUTION}} analyzers --severity warn
+
+  format:check:
+    cmds:
+      - dotnet tool restore
+      - dotnet csharpier check .
+      - dotnet format {{.SOLUTION}} analyzers --severity warn --verify-no-changes --verbosity minimal
+
+  architecture:check:
+    cmds:
+      - ~/Sites/plumb/plumb . --json
+
+  check:
+    cmds:
+      - task: prepare
+      - task: format:check
+      - task: test
+      - task: build
+      - task: architecture:check

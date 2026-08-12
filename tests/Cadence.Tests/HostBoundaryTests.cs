@@ -76,6 +76,102 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
+    public void Host_configuration_resolves_and_validates_skill_directories_from_config_directory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-skills-{Guid.NewGuid():N}");
+        var skill = Path.Combine(directory, "skills", "meridian");
+        Directory.CreateDirectory(skill);
+        File.WriteAllText(
+            Path.Combine(skill, "SKILL.md"),
+            "---\nname: meridian\ndescription: Review doctrine.\n---\n\n# Meridian\n"
+        );
+        var configPath = Path.Combine(directory, "config.json");
+        try
+        {
+            File.WriteAllText(configPath, ConfigurationJson("reviewer.md", ["skills/meridian"]));
+
+            var resolved = HostConfiguration.Load(configPath).ResolveSkillDirectories(configPath);
+
+            resolved.Should().Equal(skill);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Host_configuration_rejects_invalid_skill_directories()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-skills-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(directory, "missing-manifest"));
+        var configPath = Path.Combine(directory, "config.json");
+        try
+        {
+            File.WriteAllText(configPath, ConfigurationJson("reviewer.md", ["missing-manifest"]));
+            var missingManifest = () =>
+                HostConfiguration.Load(configPath).ResolveSkillDirectories(configPath);
+
+            missingManifest.Should().Throw<InvalidOperationException>().WithMessage("*SKILL.md*");
+
+            File.WriteAllText(configPath, ConfigurationJson("reviewer.md", ["missing"]));
+            var missingDirectory = () =>
+                HostConfiguration.Load(configPath).ResolveSkillDirectories(configPath);
+
+            missingDirectory.Should().Throw<InvalidOperationException>().WithMessage("*not found*");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Host_configuration_rejects_skill_paths_that_resolve_to_the_same_directory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-skills-{Guid.NewGuid():N}");
+        var skill = Path.Combine(directory, "skill");
+        Directory.CreateDirectory(skill);
+        File.WriteAllText(Path.Combine(skill, "SKILL.md"), "# Skill\n");
+        var configPath = Path.Combine(directory, "config.json");
+        try
+        {
+            File.WriteAllText(configPath, ConfigurationJson("reviewer.md", ["skill", "./skill"]));
+
+            var act = () => HostConfiguration.Load(configPath).ResolveSkillDirectories(configPath);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*distinct paths*");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Host_configuration_rejects_blank_skill_directory_paths(string path)
+    {
+        var configPath = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-config-{Guid.NewGuid():N}.json"
+        );
+        try
+        {
+            File.WriteAllText(configPath, ConfigurationJson("reviewer.md", [path]));
+
+            var act = () => HostConfiguration.Load(configPath);
+
+            act.Should().Throw<InvalidOperationException>().WithMessage("*skillDirectories*");
+        }
+        finally
+        {
+            File.Delete(configPath);
+        }
+    }
+
+    [Fact]
     public async Task Record_store_persists_the_latest_accepted_outcome_ledger_snapshot()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-ledger-{Guid.NewGuid():N}");
@@ -248,10 +344,14 @@ public sealed class HostBoundaryTests
         }
     }
 
-    private static string ConfigurationJson(string? doctrineFile) =>
+    private static string ConfigurationJson(
+        string? doctrineFile,
+        IReadOnlyList<string>? skillDirectories = null
+    ) =>
         $$"""
             {
               "reviewerDoctrineFile": {{JsonSerializer.Serialize(doctrineFile)}},
+              "skillDirectories": {{JsonSerializer.Serialize(skillDirectories ?? [])}},
               "providers": {},
               "profiles": {
                 "executor": { "provider": "local", "model": "model", "contextWindowTokens": 1, "maxOutputTokens": 1, "checkpointAtPercent": 80 },

@@ -9,6 +9,7 @@ public sealed class CadenceParticipantsFactory(
     Func<string, CadenceAgentProfile> profileResolver,
     ICadenceRecordSink records,
     ReviewerDoctrine reviewerDoctrine,
+    IReadOnlyList<AgentSkill> skills,
     WorkspacePreparation workspacePreparation,
     GitProcess git,
     DirtyWorkCheckpointPolicy dirtyWorkCheckpoint,
@@ -34,7 +35,13 @@ public sealed class CadenceParticipantsFactory(
                     )
                     .ToArray()
         );
-        var agents = new CadenceAgentFactory(chatClients, profileResolver, records, workspace);
+        var agents = new CadenceAgentFactory(
+            chatClients,
+            profileResolver,
+            records,
+            workspace,
+            skills
+        );
         return new CadenceParticipants(
             new PrepareWorkspaceStage(workspacePreparation),
             ExecutorAgent.Create(

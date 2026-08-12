@@ -7,7 +7,8 @@ internal sealed class CadenceAgentFactory(
     Func<string, IChatClient> chatClients,
     Func<string, CadenceAgentProfile> profileResolver,
     ICadenceRecordSink records,
-    AgentWorkspace<CadenceState> workspace
+    AgentWorkspace<CadenceState> workspace,
+    IReadOnlyList<AgentSkill> skills
 )
 {
     internal AgentDefinition<CadenceState> Create(
@@ -44,6 +45,11 @@ internal sealed class CadenceAgentFactory(
                         )
                     )
             );
+
+        foreach (var skill in skills)
+        {
+            builder.WithSkill(skill);
+        }
 
         return configure(builder).Build();
     }

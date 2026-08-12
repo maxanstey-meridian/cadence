@@ -1,32 +1,136 @@
 # Cadence
 
-Cadence is a single-run coding pipeline built as an external Tandem consumer.
+An agentic coding pipeline built on top of
+[Tandem](https://github.com/maxanstey-meridian/tandem).
 
-```text
-Packet
-  -> isolated workspace
-  -> Executor <-> Planner
-  -> candidate capture
-  -> deterministic verification
-  -> Reviewer
-  -> accepted SHA ready for Human review
+Cadence turns one delivery packet into one reviewed candidate commit. The configured
+pipeline is the lifecycle: prepare an isolated workspace, let an Executor implement
+with Planner authority, verify the captured candidate deterministically, and require
+Reviewer acceptance before anything becomes publishable.
+
+```csharp
+using Cadence;
+using Tandem;
+
+// CadenceParticipantsFactory creates the real agents, stages, interactions, and outputs.
+var participants = participantsFactory.Create();
+var cadence = Pipeline
+    .Start(
+        at: participants.PrepareWorkspace,
+        name: "cadence",
+        description: "The Executor implements with Planner guidance and Reviewer approval."
+    )
+    .Persist()
+    .Route(participants.PrepareWorkspace.Success, participants.Executor, "workspace prepared")
+    .Route(participants.PrepareWorkspace.Failed, participants.FailRun, "workspace failed")
+    .Route(
+        participants.Executor.Success,
+        state => state.ExecutorTransition is ExecutorTransition.PlannerRequested,
+        participants.Planner,
+        "planner requested"
+    )
+    .Route(
+        participants.Executor.Success,
+        state => state.ExecutorTransition is ExecutorTransition.OutcomeLedgerUpdated,
+        participants.Executor,
+        "outcome ledger updated"
+    )
+    .Route(
+        participants.Executor.Success,
+        state => state.ExecutorTransition is ExecutorTransition.ReportSubmitted,
+        participants.CaptureCandidate,
+        "report submitted"
+    )
+    .Route(
+        participants.Executor.Success,
+        state => state.ExecutorTransition is ExecutorTransition.CheckpointWritten,
+        participants.Executor,
+        "checkpoint written"
+    )
+    .Route(participants.Executor.Failed, participants.FailRun, "agent failed")
+    .Route(participants.Planner.Success, IsPlannerProceed, participants.Executor, "proceed")
+    .Route(participants.Planner.Success, IsPlannerRevision, participants.Executor, "revise approach")
+    .Route(participants.Planner.Success, IsPlannerNeedsHuman, participants.PlannerHumanInput, "needs human")
+    .Route(participants.Planner.Success, IsPlannerStop, participants.FailRun, "stop")
+    // ...planner recovery, verification, review, Human interaction, and terminal routes.
+    .Build(participants.CompleteRun, participants.FailRun);
 ```
 
-Cadence does not implement campaigns, generated repair packets, queues, daemons,
-cross-run convergence, or automatic merge.
+The complete production graph lives in
+[`DeliveryComposition.cs`](src/Cadence/DeliveryComposition.cs).
 
-## Prepare Tandem
+## How it works
 
-Until Tandem packages are published, pack the local repository into Cadence's
-ignored package feed:
+1. Cadence checks out the packet's base in a separate workspace.
+2. The Executor inspects the repository and proposes an approach.
+3. The Planner approves it, adds constraints, asks for a revision, or escalates to you.
+4. Only then can the Executor edit the workspace and produce a candidate commit.
+5. Cadence runs every verification command from the packet.
+6. The Reviewer independently inspects the change and reruns those checks.
+7. Failed checks or review findings go back to the Executor for another pass.
+8. An accepted candidate is recorded by its exact commit SHA, ready to publish when you choose.
 
-```sh
-./scripts/pack-tandem.sh
+The source working tree is never used as the run workspace. Cadence does not merge on
+your behalf, and it never publishes a different commit from the one the Reviewer
+accepted.
+
+## Who does what
+
+| Role | Responsibility | Limits |
+| --- | --- | --- |
+| **Executor** | Understands the task, implements the change, and reports progress against each outcome | Cannot edit until the Planner approves the current approach |
+| **Planner** | Challenges the approach, adds constraints, redirects weak plans, and asks you when judgement is required | Can inspect the repository but cannot edit it or run packet commands |
+| **Reviewer** | Reviews the exact candidate, checks every requested outcome, and reruns verification | Can request repairs but cannot alter the candidate |
+
+Verification commands come from the packet, not from the agents. Cadence exposes each
+one as a fixed action, so an agent can run a check but cannot rewrite it or add arguments.
+No role receives an unrestricted shell.
+
+## Before Cadence accepts a change
+
+A candidate is accepted only when:
+
+- every packet outcome has been addressed;
+- every configured verification command passes against the candidate;
+- the Reviewer has inspected the complete change from the pinned base;
+- the Reviewer's own verification reruns pass; and
+- the accepted commit is still the candidate that was verified and reviewed.
+
+Cadence checks these conditions itself rather than trusting a model to say it performed
+them. If implementation evidence changes, earlier verification and review no longer
+count. If a check fails, the actual failure is sent back for repair.
+
+## When Cadence asks you
+
+The Planner can ask for product, business, security, or other Human judgement. The
+Reviewer can also ask you to decide a finding or whether to continue after the repair
+limit. Cadence waits for the answer in the terminal and resumes the same live run.
+
+Cadence is a single-run pipeline, not a queue or background service. It does not manage
+campaigns, merge changes automatically, or resume a run after its process has stopped.
+
+## Packet
+
+```markdown
+---
+title: Implement example
+repository: /absolute/path/to/repository
+base: main
+outcomes:
+  - id: example
+    description: Deliver the requested behavior
+verification:
+  - dotnet test
+constraints:
+  - Preserve the public API
+---
+
+Inspect the relevant implementation and tests before choosing the change surface.
 ```
 
-Override `TANDEM_REPOSITORY` or `TANDEM_VERSION` when required. Cadence references
-`Tandem`, `Tandem.Advanced`, and `Tandem.Generators` as packages; it has no Tandem
-source-project reference.
+At least one outcome and one verification command are required. Packets whose outcomes
+already hold may produce an allow-empty candidate commit; they still pass complete
+verification and Reviewer inspection.
 
 ## Configure
 
@@ -36,6 +140,10 @@ Cadence reads `$CADENCE_HOME/config.json`, defaulting to `~/.cadence/config.json
 {
   "gitTimeoutSeconds": 120,
   "reviewerDoctrineFile": "reviewer-doctrine.md",
+  "skillDirectories": [
+    "/absolute/path/to/meridian",
+    "skills/repository-specific"
+  ],
   "providers": {
     "local": {
       "baseUrl": "http://localhost:11434/v1",
@@ -69,34 +177,25 @@ Cadence reads `$CADENCE_HOME/config.json`, defaulting to `~/.cadence/config.json
 }
 ```
 
-`reviewerDoctrineFile` is required. Relative paths resolve against the directory
-containing `config.json`. Cadence loads the file once during run setup, rejects a
-missing or blank file, and binds every review and publication candidate to the
-SHA-256 of the exact loaded bytes. The doctrine body is sent to Reviewer but is not
-stored in `CadenceState`.
+`reviewerDoctrineFile` is required. Relative paths resolve against the configuration
+directory. Cadence loads the file once for the run. A candidate cannot be published if
+the review doctrine no longer matches the one it was reviewed against.
 
-## Packet
+`skillDirectories` is optional. Every configured directory must contain `SKILL.md`.
+Executor, Planner, and Reviewer can load these shared instructions when relevant. Skills
+do not grant permission to edit the workspace or run extra commands.
 
-```markdown
----
-title: Implement example
-repository: /absolute/path/to/repository
-base: main
-outcomes:
-  - id: example
-    description: Deliver the requested behavior
-verification:
-  - dotnet test
-constraints:
-  - Preserve the public API
----
+## Prepare Tandem
 
-Inspect the relevant implementation and tests before choosing the change surface.
+Cadence consumes `Tandem`, `Tandem.Advanced`, and `Tandem.Generators` through package
+references. Until those packages are published, refresh the ignored local feed:
+
+```sh
+task prepare
 ```
 
-At least one outcome and one verification command are required.
-Packets whose outcomes already hold may produce an allow-empty candidate commit;
-they still pass complete verification and Reviewer inspection.
+Set `TANDEM_REPOSITORY` or `TANDEM_VERSION` to override the local repository and package
+version. Cadence has no Tandem source-project reference.
 
 ## Run
 
@@ -104,8 +203,8 @@ they still pass complete verification and Reviewer inspection.
 dotnet run --project src/Cadence.Host -- run packet.md
 ```
 
-Use `--publish` to publish after Reviewer acceptance, or publish later with the
-printed run ID:
+Pass `--publish` to publish immediately after Reviewer acceptance, or publish later
+with the printed run ID:
 
 ```sh
 dotnet run --project src/Cadence.Host -- publish <run-id>
@@ -114,25 +213,17 @@ dotnet run --project src/Cadence.Host -- publish <run-id>
 Publication pushes exactly the Reviewer-accepted candidate SHA to an isolated
 `cadence/...` branch. It does not modify the source working tree or merge.
 
-## Role Tools
+## Development
 
-| Role | Repository tools | Lifecycle tools | Verification |
-| --- | --- | --- | --- |
-| Executor | Read-only inspection; workspace mutation only while Planner-authorized | `ask_planner`, `update_outcomes`, `write_checkpoint`, `submit_report` | Receives fixed `run_verification_N` commands for packet verification; ordinary mutation tools remain conditional |
-| Planner | Read-only repository inspection | Typed Planner decision | Reads only; no mutation and no packet command execution |
-| Reviewer | Read-only files plus `git_changed_files` and `git_diff` | Typed review decision | Receives the same fixed `run_verification_N` commands and must run all of them |
-
-Packet verification commands are mapped to fixed `run_verification_N` tools; agents
-do not receive arbitrary shell access. The deterministic verification stage remains
-authoritative. Reviewer `Accept` requires all reruns green. `RequestChanges` may
-report a red rerun with exact command/result evidence because Tandem does not expose
-failed invocation details to Cadence's output-acceptance policy.
-
-## Verify
+Run the complete repository gate:
 
 ```sh
-dotnet test Cadence.slnx
-dotnet tool run csharpier check .
+task check
 ```
 
-See `PLAN.md` for the lifecycle contract and behavioral proof list.
+Use `task test`, `task build`, `task format`, or `task format:check` for individual
+checks. `task check` refreshes the local Tandem packages, checks formatting and
+analyzers, runs the tests, builds with warnings as errors, and checks the repository's
+architecture rules.
+
+See [`PLAN.md`](PLAN.md) for the complete lifecycle contract and behavioral proof list.

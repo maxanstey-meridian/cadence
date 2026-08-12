@@ -6,6 +6,7 @@ internal sealed record HostConfiguration(
     IReadOnlyDictionary<string, ProviderConfiguration> Providers,
     IReadOnlyDictionary<string, ProfileConfiguration> Profiles,
     string ReviewerDoctrineFile,
+    IReadOnlyList<string>? SkillDirectories = null,
     int GitTimeoutSeconds = 120
 )
 {
@@ -38,6 +39,12 @@ internal sealed record HostConfiguration(
             {
                 throw new InvalidOperationException("reviewerDoctrineFile is required.");
             }
+            if (configuration.SkillDirectories?.Any(string.IsNullOrWhiteSpace) == true)
+            {
+                throw new InvalidOperationException(
+                    "skillDirectories must not contain blank paths."
+                );
+            }
             return configuration;
         }
         catch (JsonException exception)
@@ -58,6 +65,38 @@ internal sealed record HostConfiguration(
                     ReviewerDoctrineFile
                 )
         );
+
+    public IReadOnlyList<string> ResolveSkillDirectories(string configurationPath)
+    {
+        var configurationDirectory = Path.GetDirectoryName(Path.GetFullPath(configurationPath))!;
+        var resolved = (SkillDirectories ?? [])
+            .Select(directory =>
+                Path.GetFullPath(
+                    Path.IsPathRooted(directory)
+                        ? directory
+                        : Path.Combine(configurationDirectory, directory)
+                )
+            )
+            .ToArray();
+        if (resolved.Distinct(StringComparer.Ordinal).Count() != resolved.Length)
+        {
+            throw new InvalidOperationException("skillDirectories must resolve to distinct paths.");
+        }
+        foreach (var directory in resolved)
+        {
+            if (!Directory.Exists(directory))
+            {
+                throw new InvalidOperationException($"Skill directory not found: {directory}");
+            }
+            if (!File.Exists(Path.Combine(directory, "SKILL.md")))
+            {
+                throw new InvalidOperationException(
+                    $"Skill directory does not contain SKILL.md: {directory}"
+                );
+            }
+        }
+        return resolved;
+    }
 }
 
 internal sealed record ProviderConfiguration(

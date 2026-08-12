@@ -8,11 +8,12 @@ namespace Cadence;
 public sealed class VerificationOperation(
     GitProcess git,
     ICadenceRecordSink records,
-    TimeSpan? commandTimeout = null
+    TimeSpan? commandTimeout = null,
+    int maximumOutputBytesPerStream = 16 * 1024 * 1024
 )
 {
-    private static readonly TimeSpan _terminationTimeout = TimeSpan.FromSeconds(5);
     private readonly TimeSpan _commandTimeout = commandTimeout ?? TimeSpan.FromMinutes(10);
+    private readonly int _maximumOutputBytesPerStream = maximumOutputBytesPerStream;
 
     public async ValueTask<OperationResult<CadenceState>> ExecuteAsync(
         PipelineOperationContext<CadenceState> context,
@@ -112,71 +113,19 @@ public sealed class VerificationOperation(
     {
         var (fileName, args) = BuildProcessStart(command);
 
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(_commandTimeout);
+        var process = await LocalProcess.RunAsync(
+            new LocalProcessRequest(
+                fileName,
+                args,
+                workspacePath,
+                _commandTimeout,
+                _maximumOutputBytesPerStream
+            ),
+            cancellationToken
+        );
+        var stderr = process.Stderr;
 
-        var sw = Stopwatch.StartNew();
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = fileName,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                WorkingDirectory = workspacePath,
-            },
-            EnableRaisingEvents = true,
-        };
-
-        foreach (var arg in args)
-        {
-            process.StartInfo.ArgumentList.Add(arg);
-        }
-
-        process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-        var stderrTask = process.StandardError.ReadToEndAsync();
-
-        var timedOut = false;
-        try
-        {
-            await process.WaitForExitAsync(cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            timedOut = !cancellationToken.IsCancellationRequested;
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch { }
-            try
-            {
-                await process
-                    .WaitForExitAsync(CancellationToken.None)
-                    .WaitAsync(_terminationTimeout, CancellationToken.None);
-            }
-            catch (TimeoutException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw new OperationCanceledException(cancellationToken);
-            }
-            catch (TimeoutException exception)
-            {
-                throw new TimeoutException(
-                    $"Verification command did not terminate within {_terminationTimeout.TotalSeconds:0} seconds.",
-                    exception
-                );
-            }
-        }
-
-        sw.Stop();
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
-        cancellationToken.ThrowIfCancellationRequested();
-
-        if (timedOut)
+        if (process.TimedOut)
         {
             stderr = string.Join(
                 Environment.NewLine,
@@ -187,15 +136,28 @@ public sealed class VerificationOperation(
                 }.Where(value => !string.IsNullOrWhiteSpace(value))
             );
         }
+        if (process.StdoutTruncated || process.StderrTruncated)
+        {
+            stderr = string.Join(
+                Environment.NewLine,
+                new[]
+                {
+                    stderr,
+                    "Verification output exceeded the complete-output capture limit.",
+                }.Where(value => !string.IsNullOrWhiteSpace(value))
+            );
+        }
 
         return new VerificationResult(
             index,
             command,
-            timedOut ? -1 : process.ExitCode,
-            stdout,
+            process.TimedOut || process.StdoutTruncated || process.StderrTruncated
+                ? -1
+                : process.ExitCode,
+            process.Stdout,
             stderr,
-            sw.Elapsed,
-            timedOut
+            process.Duration,
+            process.TimedOut
         );
     }
 
@@ -292,7 +254,7 @@ public sealed class VerificationOperation(
         }
     }
 
-    private static (string FileName, string[] Args) BuildProcessStart(string command)
+    internal static (string FileName, string[] Args) BuildProcessStart(string command)
     {
         if (OperatingSystem.IsMacOS())
         {

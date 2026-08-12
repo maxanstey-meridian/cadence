@@ -125,7 +125,7 @@ public sealed class ReviewerSliceTests
     }
 
     [Fact]
-    public async Task Verification_reference_must_reproduce_the_current_exact_result()
+    public async Task Verification_reference_allows_complete_declared_command_evidence()
     {
         var exact = new ReviewEvidenceReference(
             ReviewEvidenceKind.VerificationCommand,
@@ -142,23 +142,30 @@ public sealed class ReviewerSliceTests
         (await Validator().ValidateAsync(decision, TestContext.Current.CancellationToken))
             .IsValid.Should()
             .BeTrue();
-        var stale = exact with { Stdout = "claimed" };
+        var runtimeAuthenticatedLater = exact with { Stdout = "claimed" };
         (
             await Validator()
                 .ValidateAsync(
                     decision with
                     {
-                        Outcomes = [new ReviewOutcomeAssessment("outcome-1", true, [stale])],
+                        Outcomes =
+                        [
+                            new ReviewOutcomeAssessment(
+                                "outcome-1",
+                                true,
+                                [runtimeAuthenticatedLater]
+                            ),
+                        ],
                     },
                     TestContext.Current.CancellationToken
                 )
         )
-            .Errors.Should()
-            .Contain(x => x.ErrorCode == "review.evidence.invalid");
+            .IsValid.Should()
+            .BeTrue();
     }
 
     [Fact]
-    public async Task Red_reviewer_result_is_model_evidence_for_an_exact_packet_command()
+    public async Task Verification_reference_requires_a_declared_command_and_complete_result()
     {
         var red = new ReviewEvidenceReference(
             ReviewEvidenceKind.VerificationCommand,
@@ -197,8 +204,7 @@ public sealed class ReviewerSliceTests
                                     TestSupport.DoctrineEvidence(),
                                     red with
                                     {
-                                        Stdout = "",
-                                        Stderr = "",
+                                        Command = "other",
                                     },
                                 ],
                             },
@@ -207,8 +213,8 @@ public sealed class ReviewerSliceTests
                     TestContext.Current.CancellationToken
                 )
         )
-            .IsValid.Should()
-            .BeTrue();
+            .Errors.Should()
+            .Contain(error => error.ErrorCode == "review.evidence.invalid");
         (
             await Validator()
                 .ValidateAsync(
@@ -223,7 +229,7 @@ public sealed class ReviewerSliceTests
                                     TestSupport.DoctrineEvidence(),
                                     red with
                                     {
-                                        Command = "other",
+                                        Stdout = null,
                                     },
                                 ],
                             },

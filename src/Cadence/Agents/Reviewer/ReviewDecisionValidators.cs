@@ -338,7 +338,7 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
                     result.ExitCode == reference.ExitCode
                         && string.Equals(result.Stdout, reference.Stdout, StringComparison.Ordinal)
                         && string.Equals(result.Stderr, reference.Stderr, StringComparison.Ordinal)
-                    || reference.ExitCode is not (null or 0)
+                    || reference.ExitCode is not null
                         && reference.Stdout is not null
                         && reference.Stderr is not null
                 )

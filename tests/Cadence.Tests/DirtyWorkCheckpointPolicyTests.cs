@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Cadence.Git;
 using FluentAssertions;
 using Tandem.Advanced;
@@ -20,7 +21,11 @@ public sealed class DirtyWorkCheckpointPolicyTests
 
             var result = await policy.InterceptAsync(
                 new AgentMessageContext<CadenceState>(Guid.NewGuid(), state, null),
-                new ToolInvocation("write", ToolEffect.WorkspaceMutation),
+                new ToolInvocation(
+                    "write",
+                    ToolEffect.WorkspaceMutation,
+                    JsonSerializer.SerializeToElement(new { })
+                ),
                 CancellationToken.None
             );
 
@@ -51,7 +56,11 @@ public sealed class DirtyWorkCheckpointPolicyTests
                     TestSupport.State(repository, started),
                     null
                 ),
-                new ToolInvocation("write", ToolEffect.WorkspaceMutation),
+                new ToolInvocation(
+                    "write",
+                    ToolEffect.WorkspaceMutation,
+                    JsonSerializer.SerializeToElement(new { })
+                ),
                 CancellationToken.None
             );
 

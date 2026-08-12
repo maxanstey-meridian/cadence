@@ -7,9 +7,9 @@ namespace Cadence.Tests;
 
 internal static class TestSupport
 {
-    private static readonly Lazy<ReviewerDoctrine> DoctrineValue = new(CreateDoctrine);
+    private static readonly Lazy<ReviewerDoctrine> _doctrineValue = new(CreateDoctrine);
 
-    internal static ReviewerDoctrine Doctrine() => DoctrineValue.Value;
+    internal static ReviewerDoctrine Doctrine() => _doctrineValue.Value;
 
     internal static ReviewEvidenceReference FileEvidence(string path = "README.md", int line = 1) =>
         new(ReviewEvidenceKind.FileLine, Path: path, Line: line);

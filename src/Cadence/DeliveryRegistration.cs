@@ -17,7 +17,8 @@ public sealed record CadenceOptions(
     ICadenceRecordSink Records,
     ReviewerDoctrine ReviewerDoctrine,
     TimeProvider? TimeProvider = null,
-    TimeSpan? GitTimeout = null
+    TimeSpan? GitTimeout = null,
+    IReadOnlyList<AgentSkill>? Skills = null
 );
 
 public static class CadenceRegistration
@@ -41,6 +42,7 @@ public static class CadenceRegistration
             )
         );
         services.AddSingleton<WorkspacePreparation>();
+        var skills = (options.Skills ?? []).ToArray();
         services.AddSingleton<CadenceParticipantsFactory>(sp =>
         {
             var capabilities = sp.GetRequiredService<CadenceCapabilitySet>();
@@ -49,6 +51,7 @@ public static class CadenceRegistration
                 options.Profiles,
                 options.Records,
                 options.ReviewerDoctrine,
+                skills,
                 sp.GetRequiredService<WorkspacePreparation>(),
                 sp.GetRequiredService<GitProcess>(),
                 sp.GetRequiredService<DirtyWorkCheckpointPolicy>(),
