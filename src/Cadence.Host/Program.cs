@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem.Packets;
 using Tandem.Terminal;
 
 namespace Cadence.Host;
@@ -214,6 +215,23 @@ internal static class Program
         {
             Console.Error.WriteLine("Cancelled.");
             return 4;
+        }
+        catch (PacketFileException exception)
+        {
+            Console.Error.WriteLine($"Error: {exception.Message}");
+            foreach (var problem in exception.Problems)
+            {
+                var source = exception.SourceName ?? "packet";
+                var location = problem.Line is { } line
+                    ? $"{source}:{line}:{problem.Column ?? 1}"
+                    : source;
+                Console.Error.WriteLine($"  {location} {problem.Path}: {problem.Message}");
+            }
+            if (debug)
+            {
+                Console.Error.WriteLine(exception);
+            }
+            return 1;
         }
         catch (Exception exception)
         {

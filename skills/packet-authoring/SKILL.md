@@ -1,28 +1,87 @@
 ---
 name: cadence-packet-authoring
-description: Turn an agreed implementation conversation into a grounded Cadence delivery packet.
+description: Turn agreed delivery intent into a self-contained Cadence packet that can execute from its clean declared Git base.
 ---
 
 # Cadence Packet Authoring
 
-Turn decisions already reached with the human into one reviewable Cadence packet. Use the context already present in the conversation; do not make the human restate it through a questionnaire.
+Turn decisions already reached with the human into one reviewable Cadence packet. Use the conversation context already available; do not make the human restate it through a questionnaire.
 
-The packet is the durable statement of desired outcomes, constraints, verification, and useful implementation context. It is not an implementation plan or Cadence runtime configuration.
+The packet is the complete durable handoff to Executor, Planner, and Reviewer. It states desired outcomes, settled decisions, constraints, verification, and bounded repository context. It is not a speculative implementation plan or Cadence runtime configuration.
+
+## Central Invariant
+
+A competent Executor, starting only from the packet and a clean workspace prepared from the declared `base`, can understand the desired result, inspect a bounded set of real code, obtain Planner approval, implement the delivery, and prove it without recovering missing human context.
+
+The packet must not depend on:
+
+- conversation history;
+- the author's dirty worktree;
+- untracked or ignored files;
+- a local plan or specification absent from `base`;
+- files available only on another branch;
+- unstated product or engineering decisions.
 
 ## Before Writing
 
 1. Recover the agreed intent from the conversation:
    - desired result;
    - decisions already made;
-   - explicit constraints;
+   - explicit constraints and exclusions;
    - unresolved questions;
    - repository evidence already gathered.
 2. Read the target repository's instructions.
-3. Confirm the target repository and current base branch.
-4. Inspect only enough implementation context to make the outcomes concrete.
-5. Discover the real repository verification command from checked-in tooling such as `Taskfile.yml`, `package.json`, solution or project configuration, or the repository's documented workflow. Do not invent a command.
+3. Resolve the target repository and declared base branch.
+4. Inspect enough checked-in implementation context to identify real owner files and make the outcomes concrete.
+5. Discover exact verification commands from tooling checked in on `base`, such as `Taskfile.yml`, `package.json`, solution files, or documented repository workflows. Never invent a command.
+6. Classify every meaningful unknown:
+   - **repository-discoverable**: Executor can resolve it through bounded inspection of named owner files or their direct collaborators;
+   - **Planner-owned**: engineering direction, architecture, repository procedure, verification strategy, or scope interpretation that Planner can decide from repository evidence;
+   - **human-required**: product, UX, business, security, permission, tenancy, data, migration, legal, or compliance intent;
+   - **blocking**: implementation cannot begin faithfully until the human supplies a decision.
+7. Run the Executor-fit and run-size checks below before drafting.
 
-If product, UX, security, permission, data, migration, legal, or compliance intent remains unresolved and changes what must be delivered, stop and ask the human. Do not encode an assumption as agreed intent.
+Do not encode an assumption as agreed intent. If a human-required or blocking decision changes what must be delivered, stop and ask the smallest necessary question.
+
+## Clean-Base Grounding
+
+Cadence prepares an isolated workspace from `base`. The author's current worktree is not execution context.
+
+Before including any repository reference:
+
+- verify `base` exists as a Git ref;
+- verify every named file and directory exists on `base`, not merely in the worktree;
+- verify every local document the packet relies on is tracked and available on `base`;
+- verify every named command is supported by tooling available on `base`;
+- inspect base content when the worktree version differs.
+
+Use Git-aware inspection such as `git cat-file -e <base>:<path>` or `git show <base>:<path>` when appropriate. Do not reference an untracked plan and do not copy a plan dependency into the packet as a pointer. Incorporate the settled decisions needed for execution directly into the packet.
+
+## Executor-Fit Check
+
+Before writing, answer yes to all of these:
+
+1. Can Executor form a credible first approach after reading the packet and inspecting a small set of named owner files?
+2. Are repository-discoverable unknowns locally bounded rather than invitations to search the whole repository?
+3. Are settled technical decisions present in the packet when they materially constrain a correct implementation?
+4. Can Planner review the approach without reconstructing missing human context?
+5. Can Reviewer prove each outcome using repository evidence and the declared verification commands?
+
+If not, perform more bounded recon, add the missing settled context, split the work, or ask the human. Do not hand off a discovery prompt disguised as a packet.
+
+## One-Run Fit
+
+A packet must describe one coherent delivery with compatible outcomes, constraints, and verification.
+
+Prefer roughly 2-6 outcomes. Split the work when it spans:
+
+- independently releasable phases;
+- unrelated bounded contexts or infrastructure systems;
+- separate safety or approval boundaries;
+- more work than one Executor can reasonably implement, verify, and repair in one run;
+- outcomes that need materially different repository context or verification.
+
+Mechanical sibling outcomes may remain together. Do not preserve a giant packet merely because all work belongs to the same initiative.
 
 ## File
 
@@ -34,7 +93,7 @@ Write the packet to:
 
 Create the directory when needed. The location is a repository convention, not runtime identity; do not add timestamps, run IDs, or other execution bookkeeping.
 
-Write the file but do not run `cadence run` unless the human explicitly asks.
+Write the file but never run `cadence run` as part of authoring. Only the human initiates a model run.
 
 ## Frontmatter
 
@@ -61,13 +120,15 @@ Required frontmatter:
 
 - `title`: concise nonblank delivery name.
 - `repository`: absolute path or a path relative to the packet file.
-- `base`: Git reference to prepare as the isolated workspace base.
+- `base`: Git reference used to prepare the isolated workspace.
 - `outcomes`: ordered, nonempty list of unique nonblank `id` and nonblank `description` values.
 - `verification`: ordered, nonempty list of exact nonblank commands supported by repository tooling.
 
 Optional frontmatter:
 
 - `constraints`: ordered exact requirements. Omit it or use `[]` when none apply.
+
+Quote strings containing YAML-significant punctuation, especially `: `, `#`, braces, brackets, or scalar-looking values such as `true`, `false`, `null`, and numbers.
 
 ### Outcomes
 
@@ -76,71 +137,128 @@ Optional frontmatter:
 - Use short stable IDs and preserve meaningful authored order.
 - Do not add passing tests as an outcome; `verification` owns mechanical proof.
 - Do not hide preservation requirements or unresolved decisions in descriptions.
+- Do not bundle unrelated implementation, migration, UI, cleanup, and release phases into one outcome.
 
 ### Verification
 
-- Use exact commands supported by checked-in repository tooling.
-- Prefer the repository's established aggregate gate when it proves the outcomes.
+- Use exact commands supported by checked-in repository tooling on `base`.
+- Prefer the repository's established aggregate gate when it materially proves the outcomes.
+- Add focused commands only when the aggregate gate does not prove a material behavior.
+- Commands run from the prepared repository root.
 - Preserve command text, order, and intentional duplicates exactly.
-- Quote strings that YAML would otherwise interpret as values, including `true`, `false`, `null`, and numbers.
+- Generated artifacts must use the repository's checked-in generation command, never hand editing.
 
 ### Constraints
 
 - Include only explicit requirements that meaningfully restrict an otherwise valid implementation.
-- Preserve constraint text and order exactly.
+- Preserve authored constraint meaning and order.
+- Make constraints local and testable where possible.
 - Do not invent constraints from personal preferences.
 - Omit generic advice such as "follow best practices", "keep it clean", or "make minimal changes".
+- Do not stack broad negative claims that verification cannot prove.
+- Do not duplicate outcomes as constraints or include contradictory absolutes.
 
 ## Body
 
-Use the Markdown body for context that helps Executor, Planner, and Reviewer understand the work:
+Use only the sections that earn their keep. The body may include:
 
-- relevant facts from the conversation;
-- useful starting points found during repository inspection;
-- settled scope boundaries and explicit exclusions;
-- rationale needed to understand an agreed decision.
+- `## Known context`: settled facts and decisions needed to implement correctly;
+- `## Inspect first`: a small list of checked-in owner files sufficient for the initial approach;
+- `## Unknowns and routes`: meaningful repository-discoverable or Planner-owned unknowns and how to resolve them;
+- `## Scope boundaries`: explicit exclusions and release or safety boundaries;
+- `## Implementation constraints`: settled technical decisions, invariants, and nearby patterns that must be preserved;
+- `## Verification notes`: why the commands prove the outcomes or what evidence remains manual.
 
-Do not duplicate frontmatter, prescribe speculative implementation details, hide required outcomes or constraints in prose, or explain Cadence's runtime protocol.
+The body should:
+
+- make the packet self-contained;
+- distinguish confirmed facts from suggestions;
+- name owner files rather than every possible collaborator;
+- include settled technical detail when omitting it would force invention;
+- leave bounded local facts for Executor to inspect;
+- route engineering direction to Planner and human-owned decisions to the human.
+
+The body must not:
+
+- refer to conversation history as execution context;
+- depend on another local plan or absent specification;
+- prescribe speculative files, APIs, or designs as facts;
+- duplicate frontmatter;
+- hide required outcomes or constraints in prose;
+- explain Cadence's runtime protocol;
+- instruct agents to commit, push, merge, reset, checkout, stash, or clean;
+- contain run IDs, workspace paths, mutation-authority instructions, review formats, or other runtime bookkeeping.
 
 Example:
 
 ```markdown
-The registration decisions were agreed in the preceding design discussion.
+## Known context
 
-Inspect the existing authentication composition before choosing the implementation
-seam. Email verification is outside this packet.
+Registration uses the existing authentication composition. Duplicate email addresses
+must not create another account.
+
+## Inspect first
+
+- `src/auth/registration.ts`
+- `src/auth/auth.module.ts`
+
+## Scope boundaries
+
+Email verification is outside this delivery.
 ```
+
+## Hard Rejects
+
+Do not write or present a packet as ready when:
+
+- the desired behavior is not observable;
+- the repository or base cannot be resolved;
+- a required reference is absent from `base`;
+- execution depends on an untracked or external local document;
+- a human-required decision is unresolved;
+- the work does not fit one coherent run;
+- verification commands are invented, unavailable, or materially insufficient;
+- Executor would need broad discovery before it could propose a first approach.
+
+Report the smallest blocker instead of writing around it.
+
+## Mechanical Preflight
+
+Before presenting the packet:
+
+1. Parse and schema-validate it using a parser-only Cadence command when the installed CLI provides one. Never use `cadence run` as validation because that creates a run and may invoke models.
+2. If no parser-only command exists, do not claim parser validation occurred. Perform all remaining checks and explicitly report that parser-only validation is unavailable.
+3. Resolve `repository` relative to the packet and confirm it is the intended Git repository.
+4. Confirm `base` resolves to a commit.
+5. Verify every path named as execution context exists on `base`.
+6. Verify local documents needed for execution are tracked on `base`; otherwise inline the settled decisions or reject the packet.
+7. Verify every command against checked-in tooling on `base` without executing destructive or model-backed commands.
+8. Check YAML-significant strings, duplicate keys, duplicate outcome IDs after trimming, unknown fields, anchors, aliases, tags, and multiple documents.
+9. Check that outcomes are observable, constraints are compatible, and verification can materially prove them.
+10. Check that the packet fits one run and that initial inspection is bounded.
+
+Do not reproduce Cadence's parser in a custom script. Missing parser-only validation is a Cadence tooling gap, not permission to start a run or claim success.
 
 ## Final Review
 
-Before presenting the packet, re-read it as an execution handoff and repair mechanical or wording problems that do not change the human's intent.
+Re-read the packet as the only handoff available inside a clean workspace. Ask:
 
-Confirm that:
+- Could a competent but literal Executor satisfy this packet while missing the human's intent?
+- Does the packet contain a product or engineering decision the human never made?
+- Does any sentence rely on a file, branch, worktree change, or conversation unavailable from `base`?
+- Can Executor inspect the named files and form a first approach without broad archaeology?
+- Is this genuinely one run, or an initiative that should be split?
+- Can Reviewer prove each positive outcome without circular evidence?
 
-1. The packet describes the result agreed in the conversation.
-2. Every outcome is independently observable and belongs to the agreed scope.
-3. No product or engineering decision was silently invented.
-4. Constraints are explicit, compatible, necessary, and locally meaningful.
-5. Verification commands exist in checked-in repository tooling and run from the repository root.
-6. The body distinguishes known facts from suggestions and contains no speculative design presented as fact.
-7. `repository` resolves to the intended target and `base` names the intended current branch.
-8. YAML-ambiguous strings are quoted where necessary.
-9. There are no unknown fields, duplicate keys, duplicate outcome IDs after trimming, YAML anchors, aliases, tags, or multiple YAML documents.
-10. Repetition, generic advice, implementation-plan detail, and runtime instructions have been removed.
-
-Ask two adversarial questions:
-
-- Could a competent but literal executor satisfy this packet while missing what the human intended?
-- Does this packet contain a decision the human never made?
-
-If either answer is yes, repair the packet or ask the human for the missing decision before finishing.
+Repair mechanical and wording problems that do not change human intent. Ask the human when the repair would require a new human-owned decision.
 
 ## Finish
 
-Report the written path, outcome IDs, verification commands, and any remaining assumptions:
+Report the written path, base, outcome IDs, verification commands, grounding checks, and remaining assumptions or validation gaps:
 
 ```text
 Packet: .cadence/packets/account-registration.md
+Base: main
 
 Outcomes:
 - registration
@@ -149,19 +267,25 @@ Outcomes:
 Verification:
 - task check
 
-Assumptions:
-- None
+Grounding:
+- repository and base resolved
+- all referenced paths exist on base
+- verification command exists on base
+
+Assumptions: None
+Validation gaps: Cadence has no parser-only validation command
 ```
 
-If an unresolved human decision blocks a faithful packet, do not write around it. Report the smallest required decision instead.
+Do not offer `cadence run` as ready when a hard reject remains.
 
 ## Do Not
 
 - Do not invoke another LLM to reinterpret the conversation.
 - Do not ask the human to refill information already present in context.
-- Do not create an implementation plan or choose unresolved product behavior.
+- Do not choose unresolved product, UX, security, permission, data, migration, legal, or compliance behavior.
 - Do not run Cadence automatically.
-- Do not add expected file surfaces, queue metadata, runtime IDs, or execution mechanics.
+- Do not add fields outside the Cadence packet contract.
+- Do not import Lathe packet fields, queue concepts, campaigns, expected surfaces, or driver instructions.
 - Do not reproduce Cadence's parser or validation rules in custom scripts.
 
-Use `examples/packet.md` as the canonical shape.
+Use `examples/packet.md` as the canonical schema shape, not as a substitute for the grounding and preflight workflow above.

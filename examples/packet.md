@@ -11,4 +11,14 @@ constraints:
   - Preserve packet field and verification command order
 ---
 
-Inspect the README packet section and host boundary tests before changing the contract.
+## Known context
+
+Packet field order and authored verification command order are part of the public contract.
+
+## Inspect first
+
+Inspect the packet reader and host boundary tests:
+
+- `README.md`
+- `src/Cadence.Host/PacketReader.cs`
+- `tests/Cadence.Tests/HostBoundaryTests.cs`
