@@ -214,15 +214,23 @@ version. Cadence has no Tandem source-project reference.
 
 ## Run
 
+Install the CLI from the local source and package feed:
+
 ```sh
-dotnet run --project src/Cadence.Host -- run packet.md
+task install
+```
+
+Then run Cadence from any directory:
+
+```sh
+cadence run packet.md
 ```
 
 Pass `--publish` to publish immediately after Reviewer acceptance, or publish later
 with the printed run ID:
 
 ```sh
-dotnet run --project src/Cadence.Host -- publish <run-id>
+cadence publish <run-id>
 ```
 
 Publication pushes exactly the Reviewer-accepted candidate SHA to an isolated

@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Microsoft.Extensions.DependencyInjection;
+using Tandem.Terminal;
 
 namespace Cadence.Host;
 
@@ -125,21 +126,24 @@ internal static class Program
         var interactions = new PipelineInteractionHandlers()
             .Handle(composition.PlannerHumanInput, terminal.WaitForPlannerAsync)
             .Handle(composition.ReviewerHumanInput, terminal.WaitForReviewerAsync);
-
-        Console.WriteLine($"Run:       {runId:N}");
-        Console.WriteLine($"Workspace: {workspace}");
-        Console.WriteLine($"Executor:  {clients.Describe("executor")}");
-        Console.WriteLine($"Planner:   {clients.Describe("planner")}");
-        Console.WriteLine($"Reviewer:  {clients.Describe("reviewer")}");
-
-        var result = await new PipelineRunner().RunAsync(
-            composition.Build(),
+        var pipeline = composition.Build();
+        var result = await new PipelineRunner().RunWithTerminalAsync(
+            pipeline,
             CadenceState.Create(packet, string.Empty, workspace, timeProvider),
-            new PipelineRunOptions(runId, interactions, records),
+            new TerminalPipelineRunOptions
+            {
+                Persistence = records,
+                Run = new PipelineRunOptions(runId, interactions),
+                Display = new TerminalDisplayOptions
+                {
+                    FormatInteraction = terminal.FormatInteraction,
+                    SubmitTextAsync = terminal.SubmitAsync,
+                    CanSubmitText = terminal.HasPending,
+                },
+            },
             cancellationToken
         );
-        Console.WriteLine($"Status:    {result.Status}");
-        Console.WriteLine($"Summary:   {result.Outcome?.Summary ?? "No outcome"}");
+
         if (!result.Succeeded)
         {
             return 3;
@@ -213,7 +217,12 @@ internal static class Program
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"Error: {exception.Message}");
+            var cause = exception;
+            while (cause.InnerException is { } inner)
+            {
+                cause = inner;
+            }
+            Console.Error.WriteLine($"Error: {cause.Message}");
             if (debug)
             {
                 Console.Error.WriteLine(exception);

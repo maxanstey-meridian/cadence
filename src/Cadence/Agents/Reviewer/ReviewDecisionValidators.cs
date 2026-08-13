@@ -12,6 +12,10 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
         IEnumerable<VerificationResult>? verificationResults = null
     )
     {
+        var validateCurrentFacts =
+            expectedOutcomeIds is not null
+            || expectedConstraints is not null
+            || verificationResults is not null;
         var outcomes = expectedOutcomeIds?.ToHashSet(StringComparer.Ordinal) ?? [];
         var constraints = expectedConstraints?.ToHashSet(StringComparer.Ordinal) ?? [];
         var verification = verificationResults?.ToArray() ?? [];
@@ -19,7 +23,8 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
             doctrine,
             outcomes,
             constraints,
-            verification
+            verification,
+            validateCurrentFacts
         );
 
         RuleFor(decision => decision.Decision).IsInEnum().WithErrorCode("review.decision.invalid");
@@ -92,12 +97,16 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
         ValidationContext<ReviewDecision> context
     )
     {
+        if (expected.Count == 0)
+        {
+            return;
+        }
         var assessments = decision.ConstraintAssessments ?? [];
         AddCoverageFailures(
             assessments.Select(x => x.Constraint),
             expected,
             "constraintAssessments",
-            "Planner constraint",
+            "Constraint",
             "review.constraint_assessments",
             context
         );
@@ -121,6 +130,19 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
                     )
                     {
                         ErrorCode = "review.constraint_assessments.reference_required",
+                    }
+                );
+            }
+            if (assessment.Satisfied && !HasImplementationEvidence(assessment.Evidence))
+            {
+                context.AddFailure(
+                    new ValidationFailure(
+                        "constraintAssessments",
+                        $"Satisfied constraint '{assessment.Constraint}' requires implementation evidence."
+                    )
+                    {
+                        ErrorCode =
+                            "review.constraint_assessments.implementation_evidence_required",
                     }
                 );
             }
@@ -176,7 +198,32 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
                 }
             );
         }
+        foreach (var assessment in assessments.Where(outcome => outcome.Delivered))
+        {
+            if (!HasImplementationEvidence(assessment.Evidence))
+            {
+                context.AddFailure(
+                    new ValidationFailure(
+                        "outcomes",
+                        $"Delivered outcome '{assessment.OutcomeId}' requires implementation evidence."
+                    )
+                    {
+                        ErrorCode = "review.outcomes.implementation_evidence_required",
+                    }
+                );
+            }
+        }
     }
+
+    private static bool HasImplementationEvidence(
+        IReadOnlyList<ReviewEvidenceReference> evidence
+    ) =>
+        evidence.Any(reference =>
+            reference.Kind
+                is ReviewEvidenceKind.FileLine
+                    or ReviewEvidenceKind.Symbol
+                    or ReviewEvidenceKind.VerificationCommand
+        );
 
     private static void AddCoverageFailures(
         IEnumerable<string> actual,
@@ -305,7 +352,8 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
         ReviewerDoctrine doctrine,
         IReadOnlySet<string> outcomes,
         IReadOnlySet<string> constraints,
-        IReadOnlyList<VerificationResult> verification
+        IReadOnlyList<VerificationResult> verification,
+        bool validateCurrentFacts
     )
     {
         RuleFor(reference => reference.Kind)
@@ -314,7 +362,15 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
         RuleFor(reference => reference)
             .Custom(
                 (reference, context) =>
-                    Validate(reference, doctrine, outcomes, constraints, verification, context)
+                    Validate(
+                        reference,
+                        doctrine,
+                        outcomes,
+                        constraints,
+                        verification,
+                        validateCurrentFacts,
+                        context
+                    )
             );
     }
 
@@ -324,6 +380,7 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
         IReadOnlySet<string> outcomes,
         IReadOnlySet<string> constraints,
         IReadOnlyList<VerificationResult> verification,
+        bool validateCurrentFacts,
         ValidationContext<ReviewEvidenceReference> context
     )
     {
@@ -332,21 +389,20 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
             ReviewEvidenceKind.FileLine => !string.IsNullOrWhiteSpace(reference.Path)
                 && reference.Line > 0,
             ReviewEvidenceKind.Symbol => !string.IsNullOrWhiteSpace(reference.Symbol),
-            ReviewEvidenceKind.VerificationCommand => verification.Any(result =>
-                string.Equals(result.Command, reference.Command, StringComparison.Ordinal)
+            ReviewEvidenceKind.VerificationCommand => !string.IsNullOrWhiteSpace(reference.Command)
+                && reference.ExitCode is not null
+                && reference.Stdout is not null
+                && reference.Stderr is not null
                 && (
-                    result.ExitCode == reference.ExitCode
-                        && string.Equals(result.Stdout, reference.Stdout, StringComparison.Ordinal)
-                        && string.Equals(result.Stderr, reference.Stderr, StringComparison.Ordinal)
-                    || reference.ExitCode is not null
-                        && reference.Stdout is not null
-                        && reference.Stderr is not null
-                )
-            ),
+                    !validateCurrentFacts
+                    || verification.Any(result =>
+                        string.Equals(result.Command, reference.Command, StringComparison.Ordinal)
+                    )
+                ),
             ReviewEvidenceKind.PacketOutcome => reference.OutcomeId is not null
-                && outcomes.Contains(reference.OutcomeId),
+                && (!validateCurrentFacts || outcomes.Contains(reference.OutcomeId)),
             ReviewEvidenceKind.Constraint => reference.Constraint is not null
-                && constraints.Contains(reference.Constraint),
+                && (!validateCurrentFacts || constraints.Contains(reference.Constraint)),
             ReviewEvidenceKind.DoctrineClause => !string.IsNullOrWhiteSpace(
                 reference.DoctrineClause
             ) && doctrine.Content.Contains(reference.DoctrineClause, StringComparison.Ordinal),

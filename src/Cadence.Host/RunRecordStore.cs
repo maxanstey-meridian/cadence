@@ -213,49 +213,50 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
     {
         switch (observation)
         {
-            case PipelineStructuredOutputAccepted
+            case OutputAccepted<PlannerDecision>
             {
                 StepId: CadenceIds.Planner,
-                Payload: { } payload
+                AcceptedValue: var plannerDecision
             }:
-                var plannerDecision = Deserialize<PlannerDecision>(payload);
-                await UpdateAsync(
-                    x =>
-                        x with
-                        {
-                            PlannerDecisions = Add(x.PlannerDecisions, plannerDecision),
-                            ActivePlannerConstraints = plannerDecision.Decision
-                                is PlannerDecisionValue.Proceed
-                                    or PlannerDecisionValue.ProceedWithConstraints
-                                ? plannerDecision.Constraints
-                                : x.ActivePlannerConstraints,
-                        },
-                    cancellationToken
-                );
+                await RecordPlannerDecisionAsync(plannerDecision, cancellationToken);
                 break;
-            case PipelineStructuredOutputAccepted
+            case OutputAccepted<ReviewDecision>
             {
                 StepId: CadenceIds.Reviewer,
-                Payload: { } payload
+                AcceptedValue: var review
             }:
-                var review = Deserialize<ReviewDecision>(payload);
                 await UpdateAsync(
                     x => x with { Reviews = Add(x.Reviews, review) },
                     cancellationToken
                 );
                 break;
-            case PipelineCapabilityAccepted
+            case CapabilityAccepted<SubmitReportRequest>
             {
                 CapabilityName: "submit_report",
-                Payload: { } payload
+                AcceptedValue: var report
             }:
-                await UpdateAsync(
-                    x => x with { Report = Deserialize<SubmitReportRequest>(payload) },
-                    cancellationToken
-                );
+                await UpdateAsync(x => x with { Report = report }, cancellationToken);
                 break;
         }
     }
+
+    private async ValueTask RecordPlannerDecisionAsync(
+        PlannerDecision plannerDecision,
+        CancellationToken cancellationToken
+    ) =>
+        await UpdateAsync(
+            x =>
+                x with
+                {
+                    PlannerDecisions = Add(x.PlannerDecisions, plannerDecision),
+                    ActivePlannerConstraints = plannerDecision.Decision
+                        is PlannerDecisionValue.Proceed
+                            or PlannerDecisionValue.ProceedWithConstraints
+                        ? plannerDecision.Constraints
+                        : x.ActivePlannerConstraints,
+                },
+            cancellationToken
+        );
 
     public async ValueTask<PublicationResultRecord?> ReadLatestPublicationAsync(
         CancellationToken cancellationToken
@@ -305,10 +306,6 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
                 await File.ReadAllTextAsync(path, cancellationToken),
                 _json
             ) ?? throw new InvalidOperationException($"Run record is empty: {path}");
-
-    private T Deserialize<T>(JsonElement payload) =>
-        payload.Deserialize<T>(_json)
-        ?? throw new InvalidOperationException($"Accepted {typeof(T).Name} payload is invalid.");
 
     private static IReadOnlyList<T> Add<T>(IReadOnlyList<T> values, T value) => [.. values, value];
 

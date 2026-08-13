@@ -8,7 +8,7 @@
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);CS1591</NoWarn>
-        <TandemVersion Condition="'$(TandemVersion)' == ''">0.1.9-local</TandemVersion>
+        <TandemVersion Condition="'$(TandemVersion)' == ''">0.1.10-local</TandemVersion>
     </PropertyGroup>
     <ItemGroup>
         <PackageReference Include="CSharpier.MsBuild" Version="1.3.0" PrivateAssets="all" />

@@ -1,4 +1,5 @@
 using Cadence.Git;
+using Cadence.Host;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 
@@ -140,6 +141,64 @@ public sealed class PipelineBehaviorTests
         finally
         {
             Directory.Delete(repository, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Planner_typed_decision_reaches_record_store_without_reserialization()
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var recordDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-typed-records-{Guid.NewGuid():N}"
+        );
+        var recordPath = Path.Combine(recordDirectory, "records.json");
+        try
+        {
+            var planner = new ScriptedChatClient(
+                "planner",
+                Read("planner-read"),
+                TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed))
+            );
+            var store = new RunRecordStore(recordPath);
+            var participant = BuildParticipants(_ => planner).Create().Planner;
+            var state = TestSupport.State(repository) with
+            {
+                Packet = TestSupport.Packet() with { Repository = repository },
+                ExecutorTransition = new ExecutorTransition.PlannerRequested(
+                    new AskPlannerRequest(
+                        PlannerQuestionType.ImplementationSurfaceReview,
+                        "requested file",
+                        "May I implement?",
+                        "Implement the packet directly.",
+                        ["README.md"]
+                    )
+                ),
+            };
+
+            var result = await new PipelineRunner().RunAsync(
+                Pipeline.Start(participant, "planner-typed-record").Build(participant),
+                state,
+                new PipelineRunOptions(Observer: store),
+                TestContext.Current.CancellationToken
+            );
+
+            result.State.PlannerDecision!.Decision.Should().Be(PlannerDecisionValue.Proceed);
+            var context = await store.ReadContextAsync(
+                CadenceLedgerRole.Reviewer,
+                TestContext.Current.CancellationToken
+            );
+            var recorded = context.PlannerDecisions.Should().ContainSingle().Which;
+            recorded.Decision.Should().Be(PlannerDecisionValue.Proceed);
+            recorded.SafeNextAction.Should().Be("Implement through the inspected seam.");
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+            if (Directory.Exists(recordDirectory))
+            {
+                Directory.Delete(recordDirectory, recursive: true);
+            }
         }
     }
 
@@ -1077,7 +1136,7 @@ public sealed class PipelineBehaviorTests
             new Dictionary<string, object?>
             {
                 ["question"] = "May I implement the requested file?",
-                ["questionType"] = (int)questionType,
+                ["questionType"] = questionType.ToString(),
                 ["currentSlice"] = "requested file",
                 ["proposedApproach"] = "Create feature.txt and verify its content.",
                 ["evidence"] = new[] { "README.md establishes the repository baseline." },
@@ -1091,7 +1150,7 @@ public sealed class PipelineBehaviorTests
             new Dictionary<string, object?>
             {
                 ["question"] = "",
-                ["questionType"] = 2,
+                ["questionType"] = PlannerQuestionType.ImplementationSurfaceReview.ToString(),
                 ["currentSlice"] = "",
                 ["proposedApproach"] = "",
                 ["evidence"] = Array.Empty<string>(),
@@ -1123,7 +1182,7 @@ public sealed class PipelineBehaviorTests
                 ["addressedConstraints"] = Array.Empty<object>(),
                 ["regressionTests"] = new Dictionary<string, object?>
                 {
-                    ["disposition"] = 1,
+                    ["disposition"] = RegressionTestDisposition.Added.ToString(),
                     ["evidence"] = new[] { "The configured verification exercises feature.txt." },
                 },
             }
@@ -1140,7 +1199,7 @@ public sealed class PipelineBehaviorTests
                     new Dictionary<string, object?>
                     {
                         ["outcomeId"] = "outcome-1",
-                        ["status"] = 3,
+                        ["status"] = OutcomeStatus.Complete.ToString(),
                         ["evidence"] = new[]
                         {
                             $"feature.txt contains the requested behavior ({id}).",

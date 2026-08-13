@@ -1,12 +1,112 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Cadence.Host;
 using FluentAssertions;
+using Microsoft.Extensions.AI;
+using Tandem.OpenAICompatible;
 using Tandem.Packets;
+using Tandem.Terminal;
 
 namespace Cadence.Tests;
 
 public sealed class HostBoundaryTests
 {
+    [Fact]
+    public async Task Terminal_human_interaction_submits_typed_answers_through_the_display_seam()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-human-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new RunRecordStore(Path.Combine(directory, "records.json"));
+            await store.InitializeAsync(
+                TestSupport.Packet(),
+                TestContext.Current.CancellationToken
+            );
+            var terminal = new TerminalHumanInteraction(store);
+            var request = new ReviewerHumanRequest.RepairCap(
+                "Continue repairs?",
+                "The repair limit was reached."
+            );
+            var context = new PipelineInteractionContext<ReviewerHumanRequest, ReviewerHumanAnswer>(
+                Guid.CreateVersion7(),
+                "request-1",
+                "reviewer-human",
+                request
+            );
+
+            var waiting = terminal.WaitForReviewerAsync(
+                context,
+                TestContext.Current.CancellationToken
+            );
+
+            terminal.HasPending().Should().BeTrue();
+            terminal
+                .FormatInteraction(
+                    new PipelineInteractionRequested<ReviewerHumanRequest>(
+                        context.RunId,
+                        context.InteractionId,
+                        context.RequestId,
+                        request
+                    )
+                )
+                .Should()
+                .Be(
+                    new TerminalInteractionPrompt(
+                        "Continue repairs?",
+                        "The repair limit was reached.\nAnswer continue or stop."
+                    )
+                );
+
+            await terminal.SubmitAsync("continue", TestContext.Current.CancellationToken);
+
+            (await waiting).Should().BeOfType<ReviewerHumanAnswer.ContinueRepairs>();
+            terminal.HasPending().Should().BeFalse();
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void OpenRouter_completions_preserve_reasoning_for_pipeline_observers()
+    {
+        var configuration = new HostConfiguration(
+            new Dictionary<string, ProviderConfiguration>
+            {
+                ["openrouter"] = new("https://openrouter.ai/api/v1", "CADENCE_TEST_OPENROUTER_KEY"),
+                ["local"] = new("http://127.0.0.1:10531/v1", null, "responses"),
+            },
+            new Dictionary<string, ProfileConfiguration>
+            {
+                ["executor"] = new("openrouter", "deepseek/model", 1, 1, 80),
+                ["planner"] = new("local", "gpt-sol", 1, 1, 80, "low"),
+                ["reviewer"] = new("local", "gpt-sol", 1, 1, 80, "low"),
+            },
+            "reviewer.md"
+        );
+        Environment.SetEnvironmentVariable("CADENCE_TEST_OPENROUTER_KEY", "test-key");
+        try
+        {
+            var clients = new ConfiguredChatClients(configuration);
+            var executor = clients.Build("executor");
+            executor.Should().BeOfType<OpenRouterReasoningChatClient>();
+            executor.GetService<ChatClientMetadata>()!.DefaultModelId.Should().Be("deepseek/model");
+            clients
+                .Build("planner")
+                .GetService<ChatClientMetadata>()!
+                .DefaultModelId.Should()
+                .Be("gpt-sol");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CADENCE_TEST_OPENROUTER_KEY", null);
+        }
+    }
+
     [Fact]
     public void Host_configuration_resolves_and_loads_required_reviewer_doctrine_once_from_config_directory()
     {
@@ -583,6 +683,80 @@ public sealed class HostBoundaryTests
             );
             document.RootElement.GetProperty("checkpoints").GetArrayLength().Should().Be(1);
             document.RootElement.GetProperty("verificationResults").GetArrayLength().Should().Be(1);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Record_store_records_typed_planner_decision_directly_without_reserialization()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-records-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "records.json");
+        try
+        {
+            var store = new RunRecordStore(path);
+            var decision = new PlannerDecision(
+                PlannerDecisionValue.Proceed,
+                "go",
+                [],
+                ["README.md"],
+                "implement the outcome"
+            );
+
+            await store.ObserveAsync(
+                new OutputAccepted<PlannerDecision>(
+                    Guid.CreateVersion7(),
+                    CadenceIds.Planner,
+                    "planner-output-1",
+                    "agent.success",
+                    typeof(PlannerDecision).FullName,
+                    JsonSerializer.SerializeToElement(
+                        decision,
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web)
+                        {
+                            Converters = { new JsonStringEnumConverter() },
+                        }
+                    ),
+                    decision
+                ),
+                TestContext.Current.CancellationToken
+            );
+
+            var context = await store.ReadContextAsync(
+                CadenceLedgerRole.Reviewer,
+                TestContext.Current.CancellationToken
+            );
+            var recorded = context.PlannerDecisions.Should().ContainSingle().Which;
+            recorded.Decision.Should().Be(PlannerDecisionValue.Proceed);
+            recorded.Rationale.Should().Be("go");
+            recorded.SafeNextAction.Should().Be("implement the outcome");
+
+            await store.ObserveAsync(
+                new OutputAccepted<PlannerDecision>(
+                    Guid.CreateVersion7(),
+                    "another-step",
+                    "other-output",
+                    "agent.success",
+                    typeof(PlannerDecision).FullName,
+                    JsonSerializer.SerializeToElement(decision),
+                    decision
+                ),
+                TestContext.Current.CancellationToken
+            );
+            (
+                await store.ReadContextAsync(
+                    CadenceLedgerRole.Reviewer,
+                    TestContext.Current.CancellationToken
+                )
+            )
+                .PlannerDecisions.Should()
+                .ContainSingle();
         }
         finally
         {

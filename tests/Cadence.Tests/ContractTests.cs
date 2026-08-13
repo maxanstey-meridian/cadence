@@ -136,6 +136,7 @@ public sealed class ContractTests
                             ReviewEvidenceKind.Constraint,
                             Constraint: constraint
                         ),
+                        TestSupport.FileEvidence(),
                     ]
                 ))
                 .ToArray()
@@ -206,6 +207,93 @@ public sealed class ContractTests
         var act = () => CadenceState.Create(packet, "base", "/workspace");
 
         act.Should().Throw<ArgumentException>().WithMessage("*outcome IDs must be unique*");
+    }
+
+    [Fact]
+    public async Task Reviewer_requires_implementation_evidence_for_delivered_outcomes_and_constraints()
+    {
+        var state = CadenceState.Create(
+            TestSupport.Packet() with
+            {
+                Constraints = ["Preserve the public contract."],
+            },
+            "base-sha",
+            "/workspace"
+        );
+        var constraint = state.Constraints[0];
+        var outcomeId = state.Packet.Outcomes[0].Id;
+        var decision = new ReviewDecision(
+            ReviewDecisionValue.Accept,
+            TestSupport.Doctrine().Sha256,
+            "The packet outcome and constraint are satisfied.",
+            [
+                new ReviewOutcomeAssessment(
+                    outcomeId,
+                    true,
+                    [
+                        new ReviewEvidenceReference(
+                            ReviewEvidenceKind.PacketOutcome,
+                            OutcomeId: outcomeId
+                        ),
+                    ]
+                ),
+            ],
+            [],
+            [
+                new ReviewConstraintAssessment(
+                    constraint,
+                    true,
+                    [
+                        new ReviewEvidenceReference(
+                            ReviewEvidenceKind.Constraint,
+                            Constraint: constraint
+                        ),
+                    ]
+                ),
+            ]
+        );
+        var output = new ReviewDecisionOutput(TestSupport.Doctrine());
+
+        var result = await output
+            .ValidatorFor(state)
+            .ValidateAsync(decision, TestContext.Current.CancellationToken);
+
+        result
+            .Errors.Select(error => error.ErrorCode)
+            .Should()
+            .Contain([
+                "review.outcomes.implementation_evidence_required",
+                "review.constraint_assessments.implementation_evidence_required",
+            ]);
+
+        var evidenced = decision with
+        {
+            Outcomes =
+            [
+                decision.Outcomes[0] with
+                {
+                    Evidence = [.. decision.Outcomes[0].Evidence, TestSupport.FileEvidence()],
+                },
+            ],
+            ConstraintAssessments =
+            [
+                decision.ConstraintAssessments[0] with
+                {
+                    Evidence =
+                    [
+                        .. decision.ConstraintAssessments[0].Evidence,
+                        TestSupport.FileEvidence(),
+                    ],
+                },
+            ],
+        };
+        (
+            await output
+                .ValidatorFor(state)
+                .ValidateAsync(evidenced, TestContext.Current.CancellationToken)
+        )
+            .IsValid.Should()
+            .BeTrue();
     }
 
     [Fact]

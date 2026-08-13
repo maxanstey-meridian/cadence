@@ -22,37 +22,50 @@ public static class ReviewerPrompts
             state.VerificationResults.Count > 0
                 ? VerificationResultFormatting.Format(state.VerificationResults)
                 : "(no verification commands)";
+        var verificationEvidence = state.VerificationResults.Select(
+            result => new ReviewEvidenceReference(
+                ReviewEvidenceKind.VerificationCommand,
+                Command: result.Command,
+                ExitCode: result.ExitCode,
+                Stdout: result.Stdout,
+                Stderr: result.Stderr
+            )
+        );
         var example = JsonSerializer.Serialize(
             new
             {
                 decision = "Accept",
                 doctrineHash = doctrine.Sha256,
                 summary = "Every packet outcome is implemented and supported by reproducible evidence.",
-                outcomes = state.Packet.Outcomes.Select(outcome => new
-                {
-                    outcomeId = outcome.Id,
-                    delivered = true,
-                    evidence = new[]
-                    {
-                        new
-                        {
-                            kind = "FileLine",
-                            path = "src/example.cs",
-                            line = 42,
-                        },
-                    },
-                }),
-                constraintAssessments = state.Constraints.Select(constraint => new
-                {
-                    constraint,
-                    satisfied = true,
-                    evidence = new[] { new { kind = "Constraint", constraint } },
-                }),
-                findings = Array.Empty<object>(),
+                outcomes = state.Packet.Outcomes.Select(outcome => new ReviewOutcomeAssessment(
+                    outcome.Id,
+                    true,
+                    [
+                        new ReviewEvidenceReference(
+                            ReviewEvidenceKind.PacketOutcome,
+                            OutcomeId: outcome.Id
+                        ),
+                        .. verificationEvidence,
+                    ]
+                )),
+                constraintAssessments = state.Constraints.Select(
+                    constraint => new ReviewConstraintAssessment(
+                        constraint,
+                        true,
+                        [
+                            new ReviewEvidenceReference(
+                                ReviewEvidenceKind.Constraint,
+                                Constraint: constraint
+                            ),
+                            .. verificationEvidence,
+                        ]
+                    )
+                ),
+                findings = Array.Empty<ReviewFinding>(),
                 humanQuestion = (string?)null,
                 humanDecisionDomain = (string?)null,
             },
-            new JsonSerializerOptions { WriteIndented = true }
+            new JsonSerializerOptions(TandemJson.CreateTypedContract()) { WriteIndented = true }
         );
         return $"""
             Packet: {state.Packet.Title}
@@ -116,7 +129,9 @@ public static class ReviewerPrompts
             FileLine, Symbol, VerificationCommand, PacketOutcome, Constraint, and
             DoctrineClause. VerificationCommand must reproduce command, exitCode, stdout, and
             stderr exactly. Every finding must quote an exact DoctrineClause plus precise defect
-            evidence. Example shape:
+            evidence. Delivered outcomes and satisfied constraints require FileLine, Symbol, or
+            authenticated VerificationCommand implementation evidence in addition to their typed identity.
+            Example shape using the current deterministic verification results:
             {example}
             """;
     }
@@ -173,7 +188,7 @@ public static class ReviewerPrompts
     private static string FormatReport(ExecutorTransition? fact) =>
         fact is ExecutorTransition.ReportSubmitted submitted
             ? $"Summary: {submitted.Report.Summary}\n"
-                + $"Addressed Planner constraints:\n{string.Join("\n", submitted.Report.AddressedConstraints.Select(item => $"- {item.Constraint}: {item.Evidence}"))}\n"
+                + $"Addressed constraints (packet and accepted Planner):\n{string.Join("\n", submitted.Report.AddressedConstraints.Select(item => $"- {item.Constraint}: {item.Evidence}"))}\n"
                 + $"Regression tests: {submitted.Report.RegressionTests.Disposition}: {string.Join("; ", submitted.Report.RegressionTests.Evidence)}"
             : "(none)";
 }

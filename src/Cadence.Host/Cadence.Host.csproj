@@ -2,6 +2,10 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <RootNamespace>Cadence.Host</RootNamespace>
+        <PackAsTool>true</PackAsTool>
+        <ToolCommandName>cadence</ToolCommandName>
+        <PackageId>Cadence.Tool</PackageId>
+        <Version>0.1.1-local</Version>
     </PropertyGroup>
 
     <ItemGroup>
@@ -13,6 +17,8 @@
         <PackageReference Include="OpenAI" Version="2.12.0" />
         <PackageReference Include="System.ClientModel" Version="1.14.0" />
         <PackageReference Include="System.CommandLine" Version="2.0.0" />
+        <PackageReference Include="Tandem.OpenAICompatible" Version="$(TandemVersion)" />
         <PackageReference Include="Tandem.Packets" Version="$(TandemVersion)" />
+        <PackageReference Include="Tandem.Terminal" Version="$(TandemVersion)" />
     </ItemGroup>
 </Project>

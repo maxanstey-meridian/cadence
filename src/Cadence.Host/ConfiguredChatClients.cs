@@ -2,6 +2,7 @@ using System.ClientModel;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using Tandem.OpenAICompatible;
 
 namespace Cadence.Host;
 
@@ -79,6 +80,16 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
             ),
         };
 #pragma warning restore OPENAI001
+        if (
+            provider.WireApi == "completions"
+            && (
+                endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+                || endpoint.Host.EndsWith(".openrouter.ai", StringComparison.OrdinalIgnoreCase)
+            )
+        )
+        {
+            chatClient = new OpenRouterReasoningChatClient(chatClient);
+        }
         if (profile.ReasoningEffort is null)
         {
             return chatClient;
@@ -96,7 +107,11 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
         return chatClient
             .AsBuilder()
             .ConfigureOptions(options =>
-                options.Reasoning = new ReasoningOptions { Effort = effort }
+                options.Reasoning = new ReasoningOptions
+                {
+                    Effort = effort,
+                    Output = ReasoningOutput.Summary,
+                }
             )
             .Build();
     }

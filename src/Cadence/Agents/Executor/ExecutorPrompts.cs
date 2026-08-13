@@ -150,9 +150,10 @@ public static class ExecutorPrompts
         summary, uncertainties, and precise next action. Any uncertainty returns the next Executor
         session read-only and requires ask_planner before further edits; an uncertainty-free
         continuity checkpoint may retain current authority. When every authoritative ledger entry is
-        complete and ready for verification, call submit_report with a summary, addressed Planner
-        constraints, and a typed regression-test claim. submit_report validates and consumes the
-        ledger; do not resubmit outcomes.
+        complete and ready for verification, call submit_report with a summary, every active
+        constraint addressed exactly once using its exact text (all packet constraints plus all
+        accepted Planner constraints), and a typed regression-test claim. submit_report validates
+        and consumes the ledger; do not resubmit outcomes.
         Use NotApplicable only with concrete evidence explaining why no regression test applies.
         Do not claim that work is complete
         merely because code was written; the configured verification and review stages own
