@@ -2,6 +2,16 @@ namespace Cadence;
 
 public interface ICadenceRecordSink
 {
+    public ValueTask AcceptWorkspaceAsync(
+        WorkspacePreparationRecord workspace,
+        CancellationToken cancellationToken
+    );
+
+    public ValueTask AcceptPlannerFailureCountAsync(
+        int failureCount,
+        CancellationToken cancellationToken
+    );
+
     public ValueTask<CadenceLedgerContext> ReadContextAsync(
         CadenceLedgerRole role,
         CancellationToken cancellationToken

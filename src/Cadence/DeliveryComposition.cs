@@ -33,6 +33,18 @@ public sealed class CadenceComposition
             .Persist()
             .Route(
                 on: cadence.PrepareWorkspace.Success,
+                when: state =>
+                    state.ExecutorTransition
+                        is ExecutorTransition.PlannerRequested
+                        {
+                            Request.QuestionType: PlannerQuestionType.SessionReliability,
+                        },
+                to: cadence.Planner,
+                label: "workspace recovered"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: state => state.ExecutorTransition is null,
                 to: cadence.Executor,
                 label: "workspace prepared"
             )

@@ -874,7 +874,7 @@ public sealed class PipelineBehaviorTests
     }
 
     [Fact]
-    public async Task Reorient_discards_prior_conversation_and_rehydrates_durable_context_read_only()
+    public async Task Reorient_discards_prior_conversation_and_authorizes_the_fresh_executor()
     {
         var repository = TestSupport.CreateGitRepository();
         var workspace = Path.Combine(Path.GetTempPath(), $"cadence-reorient-{Guid.NewGuid():N}");
@@ -884,8 +884,8 @@ public sealed class PipelineBehaviorTests
                 "executor",
                 TestSupport.Text("POISONED SESSION MARKER"),
                 AskPlanner("reorient-ask", PlannerQuestionType.SessionReliability),
-                Write("blocked-after-reorient", "blocked.txt", "blocked\n"),
-                AskPlanner("reapprove", PlannerQuestionType.ImplementationSurfaceReview)
+                Write("write-after-reorient", "reoriented.txt", "approved\n"),
+                AskPlanner("stop", PlannerQuestionType.ImplementationSurfaceReview)
             );
             var planner = new ScriptedChatClient(
                 "planner",
@@ -951,7 +951,7 @@ public sealed class PipelineBehaviorTests
             );
 
             result.Succeeded.Should().BeFalse();
-            File.Exists(Path.Combine(workspace, "blocked.txt")).Should().BeFalse();
+            File.Exists(Path.Combine(workspace, "reoriented.txt")).Should().BeTrue();
             result.State.PlannerConstraints.Should().Equal("Preserve durable constraint");
             result.State.MutationAuthorized.Should().BeFalse();
             executor

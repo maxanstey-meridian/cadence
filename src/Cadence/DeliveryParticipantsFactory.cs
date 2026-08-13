@@ -69,7 +69,7 @@ public sealed class CadenceParticipantsFactory(
             skills
         );
         return new CadenceParticipants(
-            new PrepareWorkspaceStage(workspacePreparation),
+            new PrepareWorkspaceStage(workspacePreparation, records),
             ExecutorAgent.Create(
                 agents,
                 askPlanner,
@@ -79,7 +79,7 @@ public sealed class CadenceParticipantsFactory(
                 dirtyWorkCheckpoint
             ),
             PlannerAgent.Create(agents),
-            new PlannerFailureStage().Definition,
+            new PlannerFailureStage(records).Definition,
             new CaptureCandidateStage(git),
             new VerificationStage(new VerificationOperation(git, records)),
             ReviewerAgent.Create(agents, reviewerDoctrine),

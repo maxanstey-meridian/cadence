@@ -12,6 +12,75 @@ namespace Cadence.Tests;
 public sealed class HostBoundaryTests
 {
     [Fact]
+    public async Task Run_record_persists_the_complete_packet_for_process_recovery()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-recovery-{Guid.NewGuid():N}");
+        try
+        {
+            var packet = TestSupport.Packet() with { Commands = ["task generate"] };
+            var store = new RunRecordStore(Path.Combine(directory, "records.json"));
+
+            await store.InitializeAsync(packet, TestContext.Current.CancellationToken);
+
+            var recovery = await store.ReadRecoveryAsync(TestContext.Current.CancellationToken);
+            recovery.Packet.Should().BeEquivalentTo(packet);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Run_record_persists_workspace_and_planner_recovery_facts()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-recovery-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new RunRecordStore(Path.Combine(directory, "records.json"));
+            await store.InitializeAsync(
+                TestSupport.Packet(),
+                TestContext.Current.CancellationToken
+            );
+            await store.AcceptWorkspaceAsync(
+                new WorkspacePreparationRecord("pinned-sha"),
+                TestContext.Current.CancellationToken
+            );
+            await store.AcceptPlannerFailureCountAsync(1, TestContext.Current.CancellationToken);
+
+            var recovery = await store.ReadRecoveryAsync(TestContext.Current.CancellationToken);
+
+            recovery.PinnedBaseSha.Should().Be("pinned-sha");
+            recovery.PlannerFailureCount.Should().Be(1);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Missing_run_record_is_not_treated_as_a_legacy_run()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-missing-{Guid.NewGuid():N}",
+            "records.json"
+        );
+        var store = new RunRecordStore(path);
+
+        var act = async () => await store.ReadRecoveryAsync(TestContext.Current.CancellationToken);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*not found*");
+    }
+
+    [Fact]
     public async Task Terminal_human_interaction_submits_typed_answers_through_the_display_seam()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-human-{Guid.NewGuid():N}");
@@ -637,6 +706,28 @@ public sealed class HostBoundaryTests
         }
     }
 
+    [Fact]
+    public async Task Invalid_configuration_fails_before_run_directory_creation()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-cli-{Guid.NewGuid():N}");
+        var repository = TestSupport.CreateGitRepository();
+        Directory.CreateDirectory(directory);
+        var packetPath = Path.Combine(directory, "packet.md");
+        File.WriteAllText(packetPath, ValidPacket(repository, ""));
+        try
+        {
+            var exitCode = await Program.Main(["run", packetPath, "--home", directory]);
+
+            exitCode.Should().Be(1);
+            Directory.Exists(Path.Combine(directory, "runs")).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static string ValidPacket(string repository, string extra) =>
         $$"""
             ---
@@ -711,6 +802,46 @@ public sealed class HostBoundaryTests
             );
             document.RootElement.GetProperty("checkpoints").GetArrayLength().Should().Be(1);
             document.RootElement.GetProperty("verificationResults").GetArrayLength().Should().Be(1);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Separate_execution_attempts_do_not_collide_on_capability_acceptance_ids()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-records-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "records.json");
+        try
+        {
+            var first = new RunRecordStore(
+                path,
+                Guid.Parse("00000000-0000-0000-0000-000000000001")
+            );
+            var resumed = new RunRecordStore(
+                path,
+                Guid.Parse("00000000-0000-0000-0000-000000000002")
+            );
+            await first.AcceptCheckpointAsync(
+                "same-runtime-id",
+                new ProgressCheckpointRecord("First", [], [], [], "Next"),
+                TestContext.Current.CancellationToken
+            );
+            await resumed.AcceptCheckpointAsync(
+                "same-runtime-id",
+                new ProgressCheckpointRecord("Resumed", [], [], [], "Next"),
+                TestContext.Current.CancellationToken
+            );
+
+            using var document = JsonDocument.Parse(
+                await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)
+            );
+            document.RootElement.GetProperty("checkpoints").GetArrayLength().Should().Be(2);
         }
         finally
         {

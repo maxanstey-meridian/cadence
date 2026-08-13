@@ -99,7 +99,7 @@ public static class PlannerPrompts
            rejects the approach and does not authorize mutation.
         - Reorient only for a SessionReliability request, when the Executor's current
           conversation is unreliable but a corrected approach and safe next action are clear.
-          It is non-authorizing and routes a fresh Executor from durable state.
+          It authorizes that corrected approach and routes a fresh Executor from durable state.
         - NeedsHuman only when the missing decision belongs to the human: product, UX,
           business policy, security policy, permissions, tenancy, data policy, migration
           policy, legal, or compliance. Repository facts and engineering decisions are not
@@ -120,14 +120,15 @@ public static class PlannerPrompts
         an incomplete implementation surface, or a false premise.
 
         Return Reorient only when QuestionType is SessionReliability. Provide CorrectedApproach
-        and one concrete SafeNextAction. Reorient preserves accepted constraints, does not
-        authorize mutation, and the fresh Executor must submit its revised approach for approval
-        before editing. For every other question type Reorient is invalid. Fail closed rather than
-        using Reorient as a general retry.
+        and one concrete SafeNextAction. Reorient preserves accepted constraints, authorizes the
+        corrected approach for the current revision, and routes a fresh Executor that may continue
+        without repeating the same approval cycle. For every other question type Reorient is
+        invalid. Fail closed rather than using Reorient as a general retry.
 
         A Planner consultation is not evidence that prior obligations are closed. Active accepted
         constraints remain open until repository evidence proves closure. Only Proceed and
-        ProceedWithConstraints replace them; non-authorizing decisions preserve them.
+        ProceedWithConstraints replace them; Reorient authorizes its corrected approach while
+        preserving them, and other non-authorizing decisions preserve them.
 
         If a prior Planner instruction failed, treat the failure as contradictory evidence. Address
         the failing command and observed result directly. Do not repeat the instruction without

@@ -237,6 +237,26 @@ Then run Cadence from any directory:
 cadence run packet.md
 ```
 
+Interrupted executor-phase runs can resume from their retained workspace and accepted
+records with a fresh agent session:
+
+```sh
+cadence resume <run-id>
+```
+
+Runs created before packet persistence require a packet explicitly. The supplied packet is
+authoritative for the resumed delivery:
+
+```sh
+cadence resume <run-id> --packet packet.md
+```
+
+Resume preserves the run ID and dirty workspace, starts a distinct execution attempt, closes
+mutation authority, and routes through Planner before Executor continues. It does not replay
+the interrupted model session. New runs validate the retained workspace against the exact base
+SHA recorded when it was prepared; legacy runs use the retained workspace HEAD because that
+fact predates persistence.
+
 Pass `--publish` to publish immediately after Reviewer acceptance, or publish later
 with the printed run ID:
 

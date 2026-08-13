@@ -51,3 +51,17 @@ public sealed record HumanAnswerRecord(
 );
 
 public sealed record VerificationResultRecord(string CandidateSha, VerificationResult Result);
+
+public sealed record WorkspacePreparationRecord(string PinnedBaseSha);
+
+public sealed record RecoveryRecord(
+    Packet? Packet,
+    string? PinnedBaseSha,
+    OutcomeProgressDocument? Outcomes,
+    ProgressCheckpointRecord? LatestCheckpoint,
+    PlannerDecision? LatestPlannerDecision,
+    IReadOnlyList<string> ActivePlannerConstraints,
+    int PlannerFailureCount,
+    IReadOnlyList<VerificationResultRecord> VerificationResults,
+    PublicationCandidateDocument? PublicationCandidate
+);

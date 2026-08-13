@@ -60,6 +60,13 @@ Explicitly exclude:
 - General durable replay orchestration.
 - Automatic merge.
 
+Explicit executor-phase recovery is not general replay. `cadence resume <run-id>` reuses
+the retained workspace and accepted ledger facts, starts fresh model sessions, closes
+mutation authority, and routes through Planner before Executor continues. Candidate and
+verification phases remain non-resumable. The stable Cadence run ID names the durable
+delivery; each process attempt has distinct acceptance identity so resumed capability calls
+cannot collide with earlier accepted calls.
+
 Repairs remain inside one run:
 
 ```text

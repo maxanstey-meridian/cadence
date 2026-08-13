@@ -59,6 +59,129 @@ public sealed class CadenceStateTests
         act.Should().Throw<ArgumentException>().WithMessage("*commands must not be blank*");
     }
 
+    [Fact]
+    public void Recovery_restores_accepted_facts_but_closes_mutation_and_requests_planner_review()
+    {
+        var decision = new PlannerDecision(
+            PlannerDecisionValue.ProceedWithConstraints,
+            "Approved before interruption.",
+            ["Preserve the contract."],
+            ["README.md"],
+            "Continue the implementation."
+        );
+        var recovery = new RecoveryRecord(
+            TestSupport.Packet(),
+            "base-sha",
+            new OutcomeProgressDocument(
+                "accepted",
+                [
+                    new OutcomeProgress(
+                        "outcome-1",
+                        "Deliver the feature",
+                        OutcomeStatus.InProgress,
+                        ["README.md:1"],
+                        "Partially implemented.",
+                        "Finish the implementation."
+                    ),
+                ]
+            ),
+            new ProgressCheckpointRecord(
+                "Work is partially implemented.",
+                ["README.md"],
+                ["Preserve the contract."],
+                [],
+                "Finish the implementation."
+            ),
+            decision,
+            ["Preserve the contract."],
+            1,
+            [],
+            null
+        );
+
+        var state = CadenceState.Recover(TestSupport.Packet(), "base-sha", "/workspace", recovery);
+
+        state.MutationAuthorized.Should().BeFalse();
+        state.PlannerConstraints.Should().Equal("Preserve the contract.");
+        state.PlannerFailureCount.Should().Be(1);
+        state.OutcomeLedger.Single().Status.Should().Be(OutcomeStatus.InProgress);
+        state.LatestCheckpoint!.NextAction.Should().Be("Finish the implementation.");
+        state.ExecutorTransition.Should().BeOfType<ExecutorTransition.PlannerRequested>();
+        ((ExecutorTransition.PlannerRequested)state.ExecutorTransition!)
+            .Request.Should()
+            .Match<AskPlannerRequest>(request =>
+                request.QuestionType == PlannerQuestionType.SessionReliability
+                && request.Evidence.Any(value =>
+                    value.Contains("README.md", StringComparison.Ordinal)
+                )
+                && request.Evidence.Any(value =>
+                    value.Contains("Checkpoint uncertainties", StringComparison.Ordinal)
+                )
+            );
+    }
+
+    [Fact]
+    public void Recovery_rejects_runs_that_reached_candidate_verification()
+    {
+        var recovery = new RecoveryRecord(
+            TestSupport.Packet(),
+            "base-sha",
+            null,
+            null,
+            null,
+            [],
+            0,
+            [
+                new VerificationResultRecord(
+                    "candidate",
+                    new VerificationResult(0, "task check", 0, "", "", TimeSpan.Zero, false)
+                ),
+            ],
+            null
+        );
+
+        var act = () =>
+            CadenceState.Recover(TestSupport.Packet(), "base-sha", "/workspace", recovery);
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*executor-phase*");
+    }
+
+    [Fact]
+    public void Recovery_accepts_the_supplied_legacy_packet_as_authoritative()
+    {
+        var recovery = new RecoveryRecord(
+            null,
+            null,
+            new OutcomeProgressDocument(
+                "accepted",
+                [
+                    new OutcomeProgress(
+                        "other",
+                        "Different delivery",
+                        OutcomeStatus.NotStarted,
+                        [],
+                        "Not started.",
+                        "Start."
+                    ),
+                ]
+            ),
+            null,
+            null,
+            [],
+            0,
+            [],
+            null
+        );
+
+        var packet = TestSupport.Packet() with { Commands = ["task generate"] };
+
+        var state = CadenceState.Recover(packet, "base-sha", "/workspace", recovery);
+
+        state.Packet.Should().BeSameAs(packet);
+        state.OutcomeLedger.Single().OutcomeId.Should().Be("outcome-1");
+        state.OutcomeLedger.Single().Status.Should().Be(OutcomeStatus.NotStarted);
+    }
+
     [Theory]
     [InlineData("", "description")]
     [InlineData("id", "   ")]
@@ -186,6 +309,66 @@ public sealed class CadenceStateTests
         );
 
         state.PlannerConstraints.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Reorient_authorizes_the_current_revision_and_preserves_accepted_constraints()
+    {
+        var state = TestSupport
+            .State()
+            .RecordPlannerDecision(
+                new PlannerDecision(
+                    PlannerDecisionValue.ProceedWithConstraints,
+                    "Proceed carefully.",
+                    ["Preserve the public contract."],
+                    ["src/a.cs"],
+                    "Implement through the existing seam."
+                )
+            )
+            .RecordPlannerRequest(
+                new AskPlannerRequest(
+                    PlannerQuestionType.SessionReliability,
+                    "Current session is unreliable.",
+                    "How should a fresh Executor continue?",
+                    "Restart from durable facts.",
+                    ["src/a.cs"]
+                ),
+                DateTimeOffset.Parse("2026-08-11T15:00:00Z")
+            );
+
+        var reoriented = state.RecordPlannerDecision(
+            new PlannerDecision(
+                PlannerDecisionValue.Reorient,
+                "The corrected approach is safe.",
+                [],
+                ["src/a.cs"],
+                "Continue from the corrected approach.",
+                "Use the existing seam and rerun focused verification."
+            )
+        );
+
+        reoriented.MutationAuthorized.Should().BeTrue();
+        reoriented.ApprovedApproachRevision.Should().Be(reoriented.ApproachRevision);
+        reoriented.PlannerConstraints.Should().Equal("Preserve the public contract.");
+    }
+
+    [Fact]
+    public void Reorient_does_not_authorize_without_a_session_reliability_request()
+    {
+        var state = TestSupport.State();
+
+        var reoriented = state.RecordPlannerDecision(
+            new PlannerDecision(
+                PlannerDecisionValue.Reorient,
+                "The corrected approach is safe.",
+                [],
+                ["src/a.cs"],
+                "Continue from the corrected approach.",
+                "Use the existing seam."
+            )
+        );
+
+        reoriented.MutationAuthorized.Should().BeFalse();
     }
 
     [Fact]

@@ -120,7 +120,8 @@ public sealed class PlannerSliceTests
     [Fact]
     public async Task Planner_failure_stage_counts_failures_without_discarding_state()
     {
-        var stage = new PlannerFailureStage().Definition;
+        var records = new FakeRecordSink();
+        var stage = new PlannerFailureStage(records).Definition;
         var complete = PipelineNodes.Complete(new PlannerFailureCounted());
         var state = TestSupport.State() with
         {
@@ -149,6 +150,7 @@ public sealed class PlannerSliceTests
         );
 
         result.State.PlannerFailureCount.Should().Be(1);
+        records.PlannerFailureCount.Should().Be(1);
         result.State.PlannerConstraints.Should().Equal("Keep this obligation");
         result.State.OutcomeLedger.Should().Equal(state.OutcomeLedger);
     }
@@ -176,7 +178,7 @@ public sealed class PlannerSliceTests
         prompt.Should().Contain("Do not repeat the instruction");
         prompt.Should().Contain("SafeNextAction for every response");
         prompt.Should().Contain("Reorient only when QuestionType is SessionReliability");
-        prompt.Should().Contain("fresh Executor must submit its revised approach for approval");
+        prompt.Should().Contain("routes a fresh Executor that may continue");
         prompt.Should().Contain("Active accepted planner constraints");
         prompt.Should().Contain("Latest planner decision");
     }
@@ -223,7 +225,7 @@ public sealed class PlannerSliceTests
     public async Task Planner_unavailable_is_a_typed_terminal_failure_after_two_counted_failures()
     {
         var unavailable = PipelineNodes.Failed(new PlannerUnavailable());
-        var stage = new PlannerFailureStage().Definition;
+        var stage = new PlannerFailureStage(new FakeRecordSink()).Definition;
         var state = TestSupport.State().RecordPlannerFailure();
         var pipeline = Pipeline
             .Start(stage, "planner-unavailable-proof")

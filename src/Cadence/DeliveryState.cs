@@ -134,16 +134,110 @@ public sealed record CadenceState(
         );
     }
 
+    public static CadenceState Recover(
+        Packet packet,
+        string pinnedBaseSha,
+        string workspacePath,
+        RecoveryRecord recovery,
+        TimeProvider? timeProvider = null,
+        int maximumReviewAttempts = 3
+    )
+    {
+        if (recovery.PublicationCandidate is not null || recovery.VerificationResults.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Resume currently supports executor-phase runs before candidate verification."
+            );
+        }
+        var state = Create(
+            packet,
+            pinnedBaseSha,
+            workspacePath,
+            timeProvider,
+            maximumReviewAttempts
+        );
+        var persistedOutcomes = recovery.Outcomes?.Outcomes;
+        var outcomes =
+            persistedOutcomes is not null
+            && persistedOutcomes
+                .Select(outcome => (outcome.Id, outcome.Description))
+                .SequenceEqual(packet.Outcomes.Select(outcome => (outcome.Id, outcome.Description)))
+                ? persistedOutcomes
+                    .Select(outcome => new OutcomeLedgerEntry(
+                        outcome.Id,
+                        outcome.Description,
+                        outcome.Status,
+                        outcome.Evidence,
+                        outcome.ImplementationState,
+                        outcome.NextAction
+                    ))
+                    .ToArray()
+                : state.OutcomeLedger;
+        var checkpoint = recovery.LatestCheckpoint;
+        var evidence = new List<string>
+        {
+            $"Existing workspace retained at {workspacePath}.",
+            $"Pinned base is {pinnedBaseSha}.",
+        };
+        if (checkpoint is not null)
+        {
+            evidence.Add($"Latest accepted checkpoint: {checkpoint.Summary}");
+            evidence.Add($"Checkpoint changed files: {string.Join(", ", checkpoint.ChangedFiles)}");
+            evidence.Add(
+                $"Checkpoint accepted constraints: {string.Join("; ", checkpoint.AcceptedConstraints)}"
+            );
+            evidence.Add(
+                $"Checkpoint uncertainties: {string.Join("; ", checkpoint.Uncertainties)}"
+            );
+            evidence.Add($"Checkpoint next action: {checkpoint.NextAction}");
+        }
+
+        return state with
+        {
+            PlannerDecision = recovery.LatestPlannerDecision,
+            PlannerConstraints = recovery.ActivePlannerConstraints,
+            PlannerFailureCount = recovery.PlannerFailureCount,
+            OutcomeLedger = outcomes,
+            LatestCheckpoint = checkpoint is null
+                ? null
+                : new WriteCheckpointRequest(
+                    checkpoint.Summary,
+                    checkpoint.Uncertainties,
+                    checkpoint.NextAction
+                ),
+            ExecutorTransition = new ExecutorTransition.PlannerRequested(
+                new AskPlannerRequest(
+                    PlannerQuestionType.SessionReliability,
+                    "Resume interrupted executor work",
+                    "The prior Cadence process ended unexpectedly. Re-establish a safe approach from the retained workspace and durable records.",
+                    checkpoint?.NextAction
+                        ?? "Inspect the retained workspace and outcome ledger, then propose the smallest safe continuation.",
+                    evidence
+                )
+            ),
+        };
+    }
+
     public CadenceState RecordPlannerDecision(PlannerDecision decision)
     {
         var authorizesMutation =
             decision.Decision
-            is PlannerDecisionValue.Proceed
-                or PlannerDecisionValue.ProceedWithConstraints;
+                is PlannerDecisionValue.Proceed
+                    or PlannerDecisionValue.ProceedWithConstraints
+            || decision.Decision is PlannerDecisionValue.Reorient
+                && ExecutorTransition
+                    is ExecutorTransition.PlannerRequested
+                    {
+                        Request.QuestionType: PlannerQuestionType.SessionReliability,
+                    };
         return this with
         {
             PlannerDecision = decision,
-            PlannerConstraints = authorizesMutation ? decision.Constraints : PlannerConstraints,
+            PlannerConstraints = decision.Decision
+                is PlannerDecisionValue.Proceed
+                    or PlannerDecisionValue.ProceedWithConstraints
+                ? decision.Constraints
+                : PlannerConstraints,
             ApprovedApproachRevision = authorizesMutation ? ApproachRevision : null,
             PlannerFailureCount = 0,
             PlannerHumanAnswer = null,

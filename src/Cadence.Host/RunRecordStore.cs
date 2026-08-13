@@ -2,7 +2,9 @@ using System.Text.Json;
 
 namespace Cadence.Host;
 
-internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelinePersistenceObserver
+internal sealed class RunRecordStore(string path, Guid? executionAttemptId = null)
+    : ICadenceRecordSink,
+        IPipelinePersistenceObserver
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web)
@@ -15,6 +17,7 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
             record =>
                 record with
                 {
+                    Packet = packet,
                     Outcomes = new OutcomeProgressDocument(
                         "packet",
                         packet
@@ -29,6 +32,44 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
                             .ToArray()
                     ),
                 },
+            cancellationToken
+        );
+
+    public async ValueTask<RecoveryRecord> ReadRecoveryAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException($"Run record not found: {path}");
+        }
+        var record = await ReadAsync(cancellationToken);
+        return new RecoveryRecord(
+            record.Packet,
+            record.PinnedBaseSha,
+            record.Outcomes,
+            record.Checkpoints.LastOrDefault(),
+            record.PlannerDecisions.LastOrDefault(),
+            record.ActivePlannerConstraints,
+            record.PlannerFailureCount,
+            record.VerificationResults,
+            record.PublicationCandidate
+        );
+    }
+
+    public async ValueTask AcceptWorkspaceAsync(
+        WorkspacePreparationRecord workspace,
+        CancellationToken cancellationToken
+    ) =>
+        await UpdateAsync(
+            record => record with { PinnedBaseSha = workspace.PinnedBaseSha },
+            cancellationToken
+        );
+
+    public async ValueTask AcceptPlannerFailureCountAsync(
+        int failureCount,
+        CancellationToken cancellationToken
+    ) =>
+        await UpdateAsync(
+            record => record with { PlannerFailureCount = failureCount },
             cancellationToken
         );
 
@@ -59,11 +100,17 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
     ) =>
         await UpdateAsync(
             x =>
-                x.AcceptedCheckpointIds.Contains(acceptedCallId, StringComparer.Ordinal)
+                x.AcceptedCheckpointIds.Contains(
+                    AcceptanceId(acceptedCallId),
+                    StringComparer.Ordinal
+                )
                     ? x
                     : x with
                     {
-                        AcceptedCheckpointIds = Add(x.AcceptedCheckpointIds, acceptedCallId),
+                        AcceptedCheckpointIds = Add(
+                            x.AcceptedCheckpointIds,
+                            AcceptanceId(acceptedCallId)
+                        ),
                         Checkpoints = Add(x.Checkpoints, checkpoint),
                     },
             cancellationToken
@@ -76,11 +123,17 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
     ) =>
         await UpdateAsync(
             x =>
-                x.AcceptedOutcomeLedgerIds.Contains(acceptedCallId, StringComparer.Ordinal)
+                x.AcceptedOutcomeLedgerIds.Contains(
+                    AcceptanceId(acceptedCallId),
+                    StringComparer.Ordinal
+                )
                     ? x
                     : x with
                     {
-                        AcceptedOutcomeLedgerIds = Add(x.AcceptedOutcomeLedgerIds, acceptedCallId),
+                        AcceptedOutcomeLedgerIds = Add(
+                            x.AcceptedOutcomeLedgerIds,
+                            AcceptanceId(acceptedCallId)
+                        ),
                         Outcomes = new OutcomeProgressDocument(
                             acceptedCallId,
                             outcomes
@@ -249,6 +302,7 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
                 x with
                 {
                     PlannerDecisions = Add(x.PlannerDecisions, plannerDecision),
+                    PlannerFailureCount = 0,
                     ActivePlannerConstraints = plannerDecision.Decision
                         is PlannerDecisionValue.Proceed
                             or PlannerDecisionValue.ProceedWithConstraints
@@ -309,8 +363,13 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
 
     private static IReadOnlyList<T> Add<T>(IReadOnlyList<T> values, T value) => [.. values, value];
 
+    private string AcceptanceId(string acceptedId) =>
+        executionAttemptId is { } attempt ? $"{attempt:N}:{acceptedId}" : acceptedId;
+
     private sealed record RunRecord
     {
+        public Packet? Packet { get; init; }
+        public string? PinnedBaseSha { get; init; }
         public OutcomeProgressDocument? Outcomes { get; init; }
         public SubmitReportRequest? Report { get; init; }
         public IReadOnlyList<ProgressCheckpointRecord> Checkpoints { get; init; } = [];
@@ -318,6 +377,7 @@ internal sealed class RunRecordStore(string path) : ICadenceRecordSink, IPipelin
         public IReadOnlyList<string> AcceptedOutcomeLedgerIds { get; init; } = [];
         public IReadOnlyList<PlannerDecision> PlannerDecisions { get; init; } = [];
         public IReadOnlyList<string> ActivePlannerConstraints { get; init; } = [];
+        public int PlannerFailureCount { get; init; }
         public IReadOnlyList<ReviewDecision> Reviews { get; init; } = [];
         public IReadOnlyList<VerificationResultRecord> VerificationResults { get; init; } = [];
         public IReadOnlyList<string> AcceptedVerificationIds { get; init; } = [];

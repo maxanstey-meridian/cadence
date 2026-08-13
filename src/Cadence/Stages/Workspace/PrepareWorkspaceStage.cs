@@ -1,16 +1,30 @@
 namespace Cadence;
 
 [PipelineStage(CadenceIds.Prepare)]
-public sealed partial class PrepareWorkspaceStage(WorkspacePreparation preparation)
+public sealed partial class PrepareWorkspaceStage(
+    WorkspacePreparation preparation,
+    ICadenceRecordSink records
+)
 {
     public async ValueTask<Outcome<CadenceState>> ExecuteAsync(
         CadenceState state,
         CancellationToken cancellationToken
     )
     {
-        var prepared = await preparation.PrepareAsync(
-            state.Packet,
-            state.WorkspacePath,
+        var recovering =
+            state.ExecutorTransition is ExecutorTransition.PlannerRequested
+            {
+                Request.QuestionType: PlannerQuestionType.SessionReliability,
+            };
+        var prepared = recovering
+            ? await preparation.ValidateExistingAsync(
+                state.PinnedBaseSha,
+                state.WorkspacePath,
+                cancellationToken
+            )
+            : await preparation.PrepareAsync(state.Packet, state.WorkspacePath, cancellationToken);
+        await records.AcceptWorkspaceAsync(
+            new WorkspacePreparationRecord(prepared.PinnedBaseSha),
             cancellationToken
         );
         return new Outcome<CadenceState>.Success(

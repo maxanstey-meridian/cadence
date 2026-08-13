@@ -9,12 +9,32 @@ internal sealed class FakeTimeProvider(DateTimeOffset value) : TimeProvider
 
 internal sealed class FakeRecordSink : ICadenceRecordSink
 {
+    public WorkspacePreparationRecord? Workspace { get; private set; }
+    public int PlannerFailureCount { get; private set; }
     public PublicationCandidateDocument? Candidate { get; private set; }
     public List<ProgressCheckpointRecord> Checkpoints { get; } = [];
     public List<IReadOnlyList<OutcomeLedgerEntry>> OutcomeLedgers { get; } = [];
     public List<PublicationResultRecord> PublicationResults { get; } = [];
     public List<VerificationResultRecord> VerificationResults { get; } = [];
     public CadenceLedgerContext? Context { get; init; }
+
+    public ValueTask AcceptWorkspaceAsync(
+        WorkspacePreparationRecord workspace,
+        CancellationToken cancellationToken
+    )
+    {
+        Workspace = workspace;
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask AcceptPlannerFailureCountAsync(
+        int failureCount,
+        CancellationToken cancellationToken
+    )
+    {
+        PlannerFailureCount = failureCount;
+        return ValueTask.CompletedTask;
+    }
 
     public ValueTask<CadenceLedgerContext> ReadContextAsync(
         CadenceLedgerRole role,
