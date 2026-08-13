@@ -37,6 +37,9 @@ public sealed class PacketValidator : AbstractValidator<Packet>
             .NotEmpty()
             .Must(commands => commands.All(command => !string.IsNullOrWhiteSpace(command)))
             .WithMessage("Packet must declare at least one non-blank verification command.");
+        RuleForEach(packet => packet.Commands)
+            .Must(BeNonBlank)
+            .WithMessage("Packet commands must not contain null or blank values.");
         RuleForEach(packet => packet.Constraints)
             .Must(BeNonBlank)
             .WithMessage("Packet constraints must not contain null or blank values.");

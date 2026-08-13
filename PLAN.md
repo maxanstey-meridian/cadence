@@ -210,6 +210,14 @@ After report acceptance, a deterministic pipeline stage:
 
 Executor never controls git. A repair always creates a new candidate SHA.
 
+## Repository Commands
+
+Delivery packets may declare exact repository commands used during implementation, such
+as checked-in generation or migration workflows. Cadence exposes each command as a fixed,
+argument-free tool only to Executor and only after Planner authorizes the current approach.
+Commands may mutate the isolated workspace. They are not verification and are not exposed
+to Planner or Reviewer.
+
 ## Verification
 
 Delivery packets require at least one verification command. Commands execute in

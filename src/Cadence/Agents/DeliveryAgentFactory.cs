@@ -7,7 +7,8 @@ internal sealed class CadenceAgentFactory(
     Func<string, IChatClient> chatClients,
     Func<string, CadenceAgentProfile> profileResolver,
     ICadenceRecordSink records,
-    AgentWorkspace<CadenceState> workspace,
+    AgentWorkspace<CadenceState> executorWorkspace,
+    AgentWorkspace<CadenceState> reviewerWorkspace,
     IReadOnlyList<AgentSkill> skills
 )
 {
@@ -57,5 +58,6 @@ internal sealed class CadenceAgentFactory(
     internal CadenceAgentProfile ResolveProfile(string profileName) => profileResolver(profileName);
 
     internal ICadenceRecordSink Records => records;
-    internal AgentWorkspace<CadenceState> Workspace => workspace;
+    internal AgentWorkspace<CadenceState> ExecutorWorkspace => executorWorkspace;
+    internal AgentWorkspace<CadenceState> ReviewerWorkspace => reviewerWorkspace;
 }

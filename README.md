@@ -119,6 +119,8 @@ base: main
 outcomes:
   - id: example
     description: Deliver the requested behavior
+commands:
+  - task format
 verification:
   - dotnet test
 constraints:
@@ -130,9 +132,10 @@ Inspect the relevant implementation and tests before choosing the change surface
 
 The frontmatter is the delivery contract. `title`, `repository`, and `base` must be
 nonblank. `outcomes` is an ordered, nonempty list with unique nonblank IDs and nonblank
-descriptions. `verification` is an ordered, nonempty list of exact nonblank commands;
-duplicates remain separate checks. `constraints` is optional and its text is preserved
-exactly. Quote commands and constraints that YAML would otherwise interpret as values,
+descriptions. `commands` is an optional ordered list of exact nonblank repository commands
+available only to Executor after Planner authorizes mutation. `verification` is an ordered,
+nonempty list of exact nonblank read-only commands; duplicates remain separate checks.
+`constraints` is optional and its text is preserved exactly. Quote commands and constraints that YAML would otherwise interpret as values,
 including `true`, `false`, `null`, and numbers. Unknown fields and duplicate YAML keys
 are rejected.
 
@@ -141,6 +144,11 @@ resolved directory exists before loading configuration or creating a run; worksp
 preparation later proves that `base` resolves in Git. The Markdown body is trimmed at
 its outer edges, normalized to `\n`, and supplied unchanged as implementation context
 to Executor, Planner, and Reviewer.
+
+Packet `commands` support repository-owned generation and other implementation workflows.
+They may modify the isolated workspace, are not rerun as verification, and do not grant an
+unrestricted shell. Prefer checked-in task or package scripts; otherwise declare the exact
+framework command and arguments required by the delivery.
 
 Packets whose outcomes already hold may produce an allow-empty candidate commit; they
 still pass complete verification and Reviewer inspection. A packet-authoring Agent Skill
@@ -219,6 +227,9 @@ Install the CLI from the local source and package feed:
 ```sh
 task install
 ```
+
+The install task replaces any existing global Cadence tool so rebuilding the same local
+package version cannot leave an older binary installed.
 
 Then run Cadence from any directory:
 

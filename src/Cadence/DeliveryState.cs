@@ -85,6 +85,10 @@ public sealed record CadenceState(
                 nameof(packet)
             );
         }
+        if (packet.Commands.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("Packet commands must not be blank.", nameof(packet));
+        }
         if (maximumReviewAttempts <= 0)
         {
             throw new ArgumentOutOfRangeException(
@@ -260,8 +264,7 @@ public sealed record CadenceState(
         this with
         {
             LatestCheckpoint = request,
-            ApprovedApproachRevision =
-                request.Uncertainties.Count > 0 ? null : ApprovedApproachRevision,
+            ApprovedApproachRevision = null,
             LastContinuityAt = acceptedAt,
             ExecutorTransition = new ExecutorTransition.CheckpointWritten(request),
         };

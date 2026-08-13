@@ -48,6 +48,18 @@ public sealed class CadenceStateTests
     }
 
     [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void State_rejects_blank_repository_commands(string command)
+    {
+        var packet = TestSupport.Packet() with { Commands = [command] };
+
+        var act = () => CadenceState.Create(packet, "base", "/workspace");
+
+        act.Should().Throw<ArgumentException>().WithMessage("*commands must not be blank*");
+    }
+
+    [Theory]
     [InlineData("", "description")]
     [InlineData("id", "   ")]
     public void State_rejects_blank_outcome_identity(string id, string description)
@@ -177,7 +189,7 @@ public sealed class CadenceStateTests
     }
 
     [Fact]
-    public void Checkpoint_uncertainty_clears_authority_but_continuity_checkpoint_retains_it()
+    public void Every_checkpoint_revokes_mutation_authority()
     {
         var now = DateTimeOffset.Parse("2026-08-11T14:00:00Z");
         var authorized = TestSupport
@@ -192,13 +204,14 @@ public sealed class CadenceStateTests
                 )
             );
 
-        authorized
-            .RecordCheckpoint(
-                new WriteCheckpointRequest("Continuity", [], "Continue implementation."),
-                now.AddMinutes(1)
-            )
-            .MutationAuthorized.Should()
-            .BeTrue();
+        var continuity = authorized.RecordCheckpoint(
+            new WriteCheckpointRequest("Continuity", [], "Continue implementation."),
+            now.AddMinutes(1)
+        );
+
+        continuity.MutationAuthorized.Should().BeFalse();
+        continuity.PlannerConstraints.Should().Equal("Preserve the accepted contract.");
+        continuity.ApproachRevision.Should().Be(authorized.ApproachRevision);
 
         var uncertain = authorized.RecordCheckpoint(
             new WriteCheckpointRequest(

@@ -27,7 +27,8 @@ tasks:
     cmds:
       - dotnet restore {{.SOLUTION}} --force-evaluate
       - dotnet pack {{.ROOT_DIR}}/src/Cadence.Host --no-restore --configuration Release --output {{.ROOT_DIR}}/packages
-      - sh -c 'dotnet tool list --global | grep -q "^cadence.tool " && dotnet tool update --global --add-source "{{.ROOT_DIR}}/packages" Cadence.Tool --version 0.1.1-local || dotnet tool install --global --add-source "{{.ROOT_DIR}}/packages" Cadence.Tool --version 0.1.1-local'
+      - sh -c 'dotnet tool list --global | grep -q "^cadence.tool " && dotnet tool uninstall --global Cadence.Tool || true'
+      - dotnet tool install --global --add-source "{{.ROOT_DIR}}/packages" Cadence.Tool --version 0.1.1-local
 
   format:
     cmds:

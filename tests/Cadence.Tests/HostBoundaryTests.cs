@@ -388,6 +388,28 @@ public sealed class HostBoundaryTests
         }
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Packet_reader_rejects_blank_repository_commands(string command)
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
+        try
+        {
+            File.WriteAllText(packetPath, ValidPacket(repository, $"commands:\n  - \"{command}\""));
+
+            var act = () => PacketReader.Read(packetPath);
+
+            act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+            File.Delete(packetPath);
+        }
+    }
+
     [Fact]
     public void Packet_reader_preserves_authored_lists_and_resolves_context_and_repository()
     {
@@ -407,6 +429,9 @@ public sealed class HostBoundaryTests
                     description: " First result "
                   - id: second
                     description: Second result
+                commands:
+                  - " task generate "
+                  - "task contracts"
                 verification:
                   - " dotnet test "
                   - "dotnet test"
@@ -428,6 +453,7 @@ public sealed class HostBoundaryTests
             packet.Repository.Should().Be(repository);
             packet.Base.Should().Be("main");
             packet.Outcomes.Select(outcome => outcome.Id).Should().Equal("first", "second");
+            packet.Commands.Should().Equal(" task generate ", "task contracts");
             packet.Verification.Should().Equal(" dotnet test ", "dotnet test");
             packet.Constraints.Should().Equal(" Preserve exact text ");
             packet.ImplementationContext.Should().Be("Inspect first.\nThen implement.");
@@ -485,6 +511,7 @@ public sealed class HostBoundaryTests
             File.WriteAllText(packetPath, ValidPacket(repository, ""));
 
             PacketReader.Read(packetPath).Constraints.Should().BeEmpty();
+            PacketReader.Read(packetPath).Commands.Should().BeEmpty();
         }
         finally
         {
@@ -585,6 +612,7 @@ public sealed class HostBoundaryTests
         var packet = PacketReader.Read(Path.Combine(root, "examples", "packet.md"));
 
         packet.Repository.Should().Be(root);
+        packet.Commands.Should().Equal("task format");
         packet.Verification.Should().Equal("task check");
         packet.ImplementationContext.Should().Contain("host boundary tests");
     }

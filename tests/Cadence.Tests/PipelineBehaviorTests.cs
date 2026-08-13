@@ -227,6 +227,7 @@ public sealed class PipelineBehaviorTests
                 Packet = TestSupport.Packet() with
                 {
                     Repository = repository,
+                    Commands = ["dotnet --info"],
                     Verification = ["dotnet --version"],
                 },
                 PinnedBaseSha = baseSha,
@@ -259,6 +260,10 @@ public sealed class PipelineBehaviorTests
                 .AdvertisedTools.SelectMany(tools => tools)
                 .Should()
                 .Contain("run_verification_1");
+            reviewer
+                .AdvertisedTools.SelectMany(tools => tools)
+                .Should()
+                .NotContain("run_command_1");
         }
         finally
         {
@@ -280,10 +285,18 @@ public sealed class PipelineBehaviorTests
             );
             var participant = BuildParticipants(_ => executor).Create().Executor;
             var pipeline = Pipeline.Start(participant, "guard-proof").Build(participant);
+            var state = TestSupport.State(workspace) with
+            {
+                Packet = TestSupport.Packet() with
+                {
+                    Commands = ["dotnet --version"],
+                    Verification = ["dotnet --info"],
+                },
+            };
 
             var result = await new PipelineRunner().RunAsync(
                 pipeline,
-                TestSupport.State(workspace),
+                state,
                 cancellationToken: TestContext.Current.CancellationToken
             );
 
@@ -292,6 +305,63 @@ public sealed class PipelineBehaviorTests
                 .BeOfType<ExecutorTransition.PlannerRequested>();
             File.Exists(Path.Combine(workspace, "blocked.txt")).Should().BeFalse();
             executor.CallCount.Should().Be(2);
+            executor
+                .AdvertisedTools.SelectMany(tools => tools)
+                .Should()
+                .NotContain("run_command_1")
+                .And.NotContain("run_verification_1");
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Planner_authorization_exposes_exact_packet_commands_to_executor()
+    {
+        var workspace = Path.Combine(Path.GetTempPath(), $"cadence-command-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workspace);
+        try
+        {
+            var executor = new ScriptedChatClient(
+                "executor",
+                TestSupport.ToolCall("command", "run_command_1", new Dictionary<string, object?>()),
+                AskPlanner("finish")
+            );
+            var participant = BuildParticipants(_ => executor).Create().Executor;
+            var state = TestSupport.State(workspace) with
+            {
+                Packet = TestSupport.Packet() with
+                {
+                    Commands = ["dotnet --version"],
+                    Verification = ["dotnet --info"],
+                },
+            };
+            state = state.RecordPlannerDecision(
+                new PlannerDecision(
+                    PlannerDecisionValue.Proceed,
+                    "The command is required by the approved approach.",
+                    [],
+                    ["README.md"],
+                    "Run the declared repository command."
+                )
+            );
+
+            var result = await new PipelineRunner().RunAsync(
+                Pipeline.Start(participant, "command-proof").Build(participant),
+                state,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
+
+            result
+                .State.ExecutorTransition.Should()
+                .BeOfType<ExecutorTransition.PlannerRequested>();
+            executor
+                .AdvertisedTools.First()
+                .Should()
+                .Contain("run_command_1")
+                .And.Contain("run_verification_1");
         }
         finally
         {
@@ -554,7 +624,7 @@ public sealed class PipelineBehaviorTests
     }
 
     [Fact]
-    public async Task Dirty_checkpoint_lifecycle_resets_only_accepted_calls_and_retains_the_session()
+    public async Task Dirty_checkpoint_lifecycle_retains_session_and_revokes_authority_until_planner_reapproves()
     {
         var started = DateTimeOffset.Parse("2026-08-11T10:00:00Z");
         var time = new FakeTimeProvider(started);
@@ -569,10 +639,10 @@ public sealed class PipelineBehaviorTests
                 Write("first", "first.txt", "first\n"),
                 Write("blocked", "blocked.txt", "blocked\n"),
                 WriteCheckpoint("checkpoint", []),
-                Write("after-checkpoint", "after.txt", "after\n"),
-                InvalidAskPlanner("invalid-ask"),
-                Write("blocked-after-invalid", "invalid-reset.txt", "blocked\n"),
-                AskPlanner("accepted-ask")
+                Write("blocked-after-checkpoint", "blocked-after.txt", "blocked\n"),
+                AskPlanner("reapprove"),
+                Write("after-approval", "after.txt", "after\n"),
+                AskPlanner("final-ask")
             )
             {
                 BeforeCall = call =>
@@ -581,15 +651,13 @@ public sealed class PipelineBehaviorTests
                     {
                         time.Value = started.AddMinutes(5);
                     }
-                    if (call == 7)
-                    {
-                        time.Value = started.AddMinutes(10);
-                    }
                 },
             };
             var planner = new ScriptedChatClient(
                 "planner",
                 Read("planner-read"),
+                TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed)),
+                Read("planner-read-reapprove"),
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed)),
                 Read("planner-read-stop"),
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Stop))
@@ -619,10 +687,10 @@ public sealed class PipelineBehaviorTests
             result.Succeeded.Should().BeFalse();
             File.Exists(Path.Combine(workspace, "first.txt")).Should().BeTrue();
             File.Exists(Path.Combine(workspace, "blocked.txt")).Should().BeFalse();
+            File.Exists(Path.Combine(workspace, "blocked-after.txt")).Should().BeFalse();
             File.Exists(Path.Combine(workspace, "after.txt")).Should().BeTrue();
-            File.Exists(Path.Combine(workspace, "invalid-reset.txt")).Should().BeFalse();
             records.Checkpoints.Should().ContainSingle();
-            result.State.LastContinuityAt.Should().Be(started.AddMinutes(10));
+            result.State.MutationAuthorized.Should().BeFalse();
             executor
                 .Requests[5]
                 .Should()
@@ -711,16 +779,26 @@ public sealed class PipelineBehaviorTests
         }
     }
 
-    [Fact]
-    public async Task Accepted_uncertain_checkpoint_returns_executor_read_only()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Every_checkpoint_revokes_authority_and_routes_executor_to_planner(
+        bool hasUncertainties
+    )
     {
-        var workspace = Path.Combine(Path.GetTempPath(), $"cadence-uncertain-{Guid.NewGuid():N}");
+        var workspace = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-checkpoint-auth-{Guid.NewGuid():N}"
+        );
         Directory.CreateDirectory(workspace);
         try
         {
             var executor = new ScriptedChatClient(
                 "executor",
-                WriteCheckpoint("uncertain-checkpoint", ["The integration owner is unclear."]),
+                WriteCheckpoint(
+                    "checkpoint",
+                    hasUncertainties ? ["The integration owner is unclear."] : []
+                ),
                 AskPlanner("required-reapproval")
             );
             var participant = BuildParticipants(_ => executor).Create().Executor;
@@ -737,7 +815,7 @@ public sealed class PipelineBehaviorTests
                 );
 
             var result = await new PipelineRunner().RunAsync(
-                Pipeline.Start(participant, "uncertain-checkpoint-proof").Build(participant),
+                Pipeline.Start(participant, "checkpoint-auth-proof").Build(participant),
                 state,
                 cancellationToken: TestContext.Current.CancellationToken
             );
@@ -1140,20 +1218,6 @@ public sealed class PipelineBehaviorTests
                 ["currentSlice"] = "requested file",
                 ["proposedApproach"] = "Create feature.txt and verify its content.",
                 ["evidence"] = new[] { "README.md establishes the repository baseline." },
-            }
-        );
-
-    private static ChatResponse InvalidAskPlanner(string id) =>
-        TestSupport.ToolCall(
-            id,
-            "ask_planner",
-            new Dictionary<string, object?>
-            {
-                ["question"] = "",
-                ["questionType"] = PlannerQuestionType.ImplementationSurfaceReview.ToString(),
-                ["currentSlice"] = "",
-                ["proposedApproach"] = "",
-                ["evidence"] = Array.Empty<string>(),
             }
         );
 

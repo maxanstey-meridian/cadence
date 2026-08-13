@@ -24,6 +24,7 @@ internal static class PacketReader
                     outcome.Description.Trim()
                 ))
                 .ToArray(),
+            Commands = input.Value.Commands ?? [],
             Constraints = input.Value.Constraints ?? [],
             ImplementationContext = input.Context,
         };

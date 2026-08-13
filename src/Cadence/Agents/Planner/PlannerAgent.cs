@@ -12,7 +12,7 @@ internal static class PlannerAgent
             builder =>
                 builder
                     .WithWorkspace(
-                        agents.Workspace,
+                        agents.ReviewerWorkspace,
                         [AgentTools.Always<CadenceState>("read_file", "ls", "grep", "git:ro")]
                     )
                     .WithMessage(PlannerPrompts.BuildMessage)

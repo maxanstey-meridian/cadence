@@ -215,7 +215,7 @@ public sealed class PlannerSliceTests
 
         prompt.Should().Contain("QuestionType SessionReliability");
         prompt.Should().Contain("discards this conversation before Planner runs");
-        prompt.Should().Contain("Any non-empty uncertainties close mutation authority");
+        prompt.Should().Contain("Every checkpoint closes mutation authority");
         prompt.Should().Contain("Never write \"none\" as an uncertainty");
     }
 

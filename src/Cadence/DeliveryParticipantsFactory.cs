@@ -21,7 +21,32 @@ public sealed class CadenceParticipantsFactory(
 {
     public CadenceParticipants Create()
     {
-        var workspace = AgentWorkspace<CadenceState>.Define(
+        var executorWorkspace = AgentWorkspace<CadenceState>.Define(
+            state => state.WorkspacePath,
+            state =>
+                state.MutationAuthorized
+                    ?
+                    [
+                        .. state.Packet.Verification.Select(
+                            (command, index) =>
+                                AgentCommand.Define(
+                                    $"run_verification_{index + 1}",
+                                    $"Run verification command {index + 1}: {command}",
+                                    command
+                                )
+                        ),
+                        .. state.Packet.Commands.Select(
+                            (command, index) =>
+                                AgentCommand.Define(
+                                    $"run_command_{index + 1}",
+                                    $"Run repository command {index + 1}: {command}",
+                                    command
+                                )
+                        ),
+                    ]
+                    : []
+        );
+        var reviewerWorkspace = AgentWorkspace<CadenceState>.Define(
             state => state.WorkspacePath,
             state =>
                 state
@@ -39,7 +64,8 @@ public sealed class CadenceParticipantsFactory(
             chatClients,
             profileResolver,
             records,
-            workspace,
+            executorWorkspace,
+            reviewerWorkspace,
             skills
         );
         return new CadenceParticipants(

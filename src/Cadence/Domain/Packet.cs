@@ -9,5 +9,9 @@ public sealed record Packet(
     IReadOnlyList<PacketOutcome> Outcomes,
     IReadOnlyList<string> Verification,
     IReadOnlyList<string> Constraints,
-    string ImplementationContext = ""
-);
+    string ImplementationContext = "",
+    IReadOnlyList<string>? Commands = null
+)
+{
+    public IReadOnlyList<string> Commands { get; init; } = Commands ?? [];
+}

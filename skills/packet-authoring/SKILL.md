@@ -33,7 +33,7 @@ The packet must not depend on:
 2. Read the target repository's instructions.
 3. Resolve the target repository and declared base branch.
 4. Inspect enough checked-in implementation context to identify real owner files and make the outcomes concrete.
-5. Discover exact verification commands from tooling checked in on `base`, such as `Taskfile.yml`, `package.json`, solution files, or documented repository workflows. Never invent a command.
+5. Discover exact implementation and verification commands from tooling checked in on `base`, such as `Taskfile.yml`, `package.json`, solution files, or documented repository workflows. Never invent a command.
 6. Classify every meaningful unknown:
    - **repository-discoverable**: Executor can resolve it through bounded inspection of named owner files or their direct collaborators;
    - **Planner-owned**: engineering direction, architecture, repository procedure, verification strategy, or scope interpretation that Planner can decide from repository evidence;
@@ -52,7 +52,7 @@ Before including any repository reference:
 - verify `base` exists as a Git ref;
 - verify every named file and directory exists on `base`, not merely in the worktree;
 - verify every local document the packet relies on is tracked and available on `base`;
-- verify every named command is supported by tooling available on `base`;
+- verify every named implementation and verification command is supported by tooling available on `base`;
 - inspect base content when the worktree version differs.
 
 Use Git-aware inspection such as `git cat-file -e <base>:<path>` or `git show <base>:<path>` when appropriate. Do not reference an untracked plan and do not copy a plan dependency into the packet as a pointer. Incorporate the settled decisions needed for execution directly into the packet.
@@ -109,6 +109,8 @@ outcomes:
     description: Users can create an account with valid registration details
   - id: duplicate-email
     description: An existing email address is rejected without creating another account
+commands:
+  - task generate
 verification:
   - task check
 constraints:
@@ -126,6 +128,7 @@ Required frontmatter:
 
 Optional frontmatter:
 
+- `commands`: ordered exact repository commands needed during implementation. Omit it or use `[]` when none apply.
 - `constraints`: ordered exact requirements. Omit it or use `[]` when none apply.
 
 Quote strings containing YAML-significant punctuation, especially `: `, `#`, braces, brackets, or scalar-looking values such as `true`, `false`, `null`, and numbers.
@@ -139,14 +142,25 @@ Quote strings containing YAML-significant punctuation, especially `: `, `#`, bra
 - Do not hide preservation requirements or unresolved decisions in descriptions.
 - Do not bundle unrelated implementation, migration, UI, cleanup, and release phases into one outcome.
 
+### Commands
+
+- Include only commands the Executor must run to implement the packet, such as migration, contract, or client generation.
+- Use the exact command and fixed arguments supported by checked-in repository tooling on `base`.
+- Prefer checked-in task or package scripts over raw framework commands when they exist.
+- Commands run from the prepared repository root and may modify the isolated workspace.
+- Cadence exposes them only to Executor after Planner authorizes mutation.
+- Do not include exploratory shells, executable families such as bare `dotnet` or `npm`, destructive host commands, or Git commands.
+- Do not duplicate verification commands unless implementation genuinely requires an earlier invocation.
+- Generated artifacts must use the declared repository command, never hand editing.
+
 ### Verification
 
 - Use exact commands supported by checked-in repository tooling on `base`.
 - Prefer the repository's established aggregate gate when it materially proves the outcomes.
 - Add focused commands only when the aggregate gate does not prove a material behavior.
+- Verification commands must be read-only because Cadence reruns them against the captured candidate and rejects candidate mutation.
 - Commands run from the prepared repository root.
 - Preserve command text, order, and intentional duplicates exactly.
-- Generated artifacts must use the repository's checked-in generation command, never hand editing.
 
 ### Constraints
 
@@ -217,6 +231,7 @@ Do not write or present a packet as ready when:
 - execution depends on an untracked or external local document;
 - a human-required decision is unresolved;
 - the work does not fit one coherent run;
+- implementation requires a repository workflow that is described in prose but absent from `commands`;
 - verification commands are invented, unavailable, or materially insufficient;
 - Executor would need broad discovery before it could propose a first approach.
 
@@ -254,7 +269,7 @@ Repair mechanical and wording problems that do not change human intent. Ask the 
 
 ## Finish
 
-Report the written path, base, outcome IDs, verification commands, grounding checks, and remaining assumptions or validation gaps:
+Report the written path, base, outcome IDs, repository commands, verification commands, grounding checks, and remaining assumptions or validation gaps:
 
 ```text
 Packet: .cadence/packets/account-registration.md
@@ -263,6 +278,9 @@ Base: main
 Outcomes:
 - registration
 - duplicate-email
+
+Commands:
+- task generate
 
 Verification:
 - task check

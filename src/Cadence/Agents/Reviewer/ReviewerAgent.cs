@@ -15,10 +15,10 @@ internal static class ReviewerAgent
             builder =>
                 builder
                     .WithWorkspace(
-                        agents.Workspace,
+                        agents.ReviewerWorkspace,
                         [
                             AgentTools.Always<CadenceState>("read_file", "ls", "grep", "git:ro"),
-                            AgentTools.Always<CadenceState>(agents.Workspace.Commands),
+                            AgentTools.Always<CadenceState>(agents.ReviewerWorkspace.Commands),
                         ]
                     )
                     .WithMessage(state => ReviewerPrompts.BuildMessage(state, doctrine))

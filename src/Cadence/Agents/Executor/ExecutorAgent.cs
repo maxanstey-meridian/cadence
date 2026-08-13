@@ -23,14 +23,14 @@ internal static class ExecutorAgent
                     .WithCapability(submitReport)
                     .WithMessage(ExecutorPrompts.BuildMessage)
                     .WithWorkspace(
-                        agents.Workspace,
+                        agents.ExecutorWorkspace,
                         [
                             AgentTools.Always<CadenceState>(
                                 "read_file",
                                 "ls",
                                 "grep",
                                 "git:ro",
-                                agents.Workspace.Commands
+                                agents.ExecutorWorkspace.Commands
                             ),
                             AgentTools.When<CadenceState>(
                                 state => state.MutationAuthorized,

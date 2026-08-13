@@ -75,8 +75,8 @@ public static class ExecutorPrompts
         $"""
             Context window approaching limit: {context.CurrentContextTokens} tokens used.
             Write a checkpoint of your current work state using the write_checkpoint tool.
-            If you record any uncertainty, mutation authority will close and the successor
-            must call ask_planner before continuing edits.
+            Mutation authority will close after every checkpoint and the executor must call
+            ask_planner before continuing edits.
             Call write_checkpoint now.
             """;
 
@@ -89,8 +89,8 @@ public static class ExecutorPrompts
         action. Do not supply completed work, inspected files, changed files,
         outcomes, accepted constraints, candidate state, or verification state.
         Those objective facts are derived from typed state and runtime evidence.
-        Any non-empty uncertainties close mutation authority; only an uncertainty-free
-        continuity checkpoint retains current authority. Never write "none" as an uncertainty.
+        Every checkpoint closes mutation authority; the executor must call
+        ask_planner before continuing edits. Never write "none" as an uncertainty.
 
         This is the only action available. Do not attempt other work.
         """;
@@ -147,9 +147,8 @@ public static class ExecutorPrompts
         another Planner approval by itself.
 
         During a checkpoint-only invocation, call write_checkpoint with only a successor-oriented
-        summary, uncertainties, and precise next action. Any uncertainty returns the next Executor
-        session read-only and requires ask_planner before further edits; an uncertainty-free
-        continuity checkpoint may retain current authority. When every authoritative ledger entry is
+        summary, uncertainties, and precise next action. Every checkpoint closes mutation authority
+        and the executor must call ask_planner before continuing edits. When every authoritative ledger entry is
         complete and ready for verification, call submit_report with a summary, every active
         constraint addressed exactly once using its exact text (all packet constraints plus all
         accepted Planner constraints), and a typed regression-test claim. submit_report validates
