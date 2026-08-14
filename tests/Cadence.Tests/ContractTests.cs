@@ -5,6 +5,15 @@ namespace Cadence.Tests;
 public sealed class ContractTests
 {
     [Fact]
+    public void Executor_stops_investigating_at_the_next_lifecycle_action()
+    {
+        ExecutorPrompts.Instructions.Should().Contain("call ask_planner immediately");
+        ExecutorPrompts.Instructions.Should().Contain("announce that you are ready and then");
+        ExecutorPrompts.Instructions.Should().Contain("next authorized edit");
+        ExecutorPrompts.Instructions.Should().Contain("begin mutation");
+    }
+
+    [Fact]
     public async Task Decision_discriminants_must_be_defined_enum_values()
     {
         var planner = new PlannerDecision(
@@ -455,7 +464,42 @@ public sealed class ContractTests
     }
 
     [Fact]
-    public void Reviewer_and_ledger_context_render_regression_test_evidence()
+    public void Planner_message_identifies_direct_checkpoint_review()
+    {
+        var state = TestSupport
+            .State()
+            .RecordCheckpoint(
+                new WriteCheckpointRequest(
+                    "Progress",
+                    ["Open question"],
+                    "Continue implementation"
+                ),
+                DateTimeOffset.Parse("2026-08-14T12:00:00Z")
+            );
+
+        PlannerPrompts
+            .BuildMessage(state)
+            .Should()
+            .Contain("Checkpoint review requested")
+            .And.NotContain("(no request provided)");
+    }
+
+    [Fact]
+    public void Executor_message_explains_current_revocable_mutation_authority()
+    {
+        var message = ExecutorPrompts.BuildMessage(TestSupport.State());
+
+        message.Should().Contain("Mutation-authority lifecycle:");
+        message.Should().Contain("current authority for this invocation");
+        message.Should().Contain("revocable lease");
+        message.Should().Contain("be open in one invocation");
+        message.Should().Contain("closed in the next without contradiction");
+        message.Should().Contain("mutation tools are intentionally absent");
+        message.Should().Contain("checkpoint-only invocation is the explicit exception");
+    }
+
+    [Fact]
+    public void Reviewer_renders_regression_test_evidence()
     {
         var report = new SubmitReportRequest(
             "Implemented",
@@ -466,15 +510,9 @@ public sealed class ContractTests
             )
         );
         var state = TestSupport.State().RecordImplementationReport(report);
-        var ledger = new CadenceLedgerContext(null, report, null, [], [], [], [], []);
-
         ReviewerPrompts
             .BuildMessage(state, TestSupport.Doctrine())
             .Should()
             .Contain("Regression tests: Added: tests/a.cs: focused regression");
-        CadenceLedgerContextFormatter
-            .Format(ledger)
-            .Should()
-            .Contain("Regression tests: Added; evidence=tests/a.cs: focused regression");
     }
 }

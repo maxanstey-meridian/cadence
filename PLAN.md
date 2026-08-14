@@ -60,7 +60,7 @@ Explicitly exclude:
 - General durable replay orchestration.
 - Automatic merge.
 
-Explicit executor-phase recovery is not general replay. `cadence resume <run-id>` reuses
+Explicit executor-phase recovery is not general replay. `cadence resume <run-id-or-packet>` reuses
 the retained workspace and accepted ledger facts, starts fresh model sessions, closes
 mutation authority, and routes through Planner before Executor continues. Candidate and
 verification phases remain non-resumable. The stable Cadence run ID names the durable
@@ -320,7 +320,8 @@ and five minutes have elapsed since the last continuity marker
   -> require write_checkpoint
   -> save the typed checkpoint
   -> reset the continuity timestamp
-  -> continue the same Executor session
+  -> route to Planner for checkpoint review
+  -> continue the same Executor session with renewed authority
 ```
 
 Implementation:
@@ -334,7 +335,8 @@ Implementation:
 - Cadence provides the blocked message and remediation instruction.
 - The existing typed `write_checkpoint` capability records the checkpoint and
   ends the Executor visit.
-- Composition routes back to Executor with its conversation retained.
+- Composition routes to Planner, then back to Executor after an authorizing decision.
+- The Executor conversation is retained across that Planner consultation.
 - No session reset occurs for this policy.
 
 The purpose is not to measure an exact amount of code. It prevents substantial
@@ -350,7 +352,8 @@ context reaches 80%
   -> require write_checkpoint
   -> save the checkpoint
   -> reset the Executor session
-  -> fresh Executor resumes from durable context
+  -> route to Planner for checkpoint review
+  -> fresh Executor resumes from durable context with renewed authority
 ```
 
 Tandem's native token-based `CheckpointPolicy` owns this behavior. The dirty-work

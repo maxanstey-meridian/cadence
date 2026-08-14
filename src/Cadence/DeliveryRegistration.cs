@@ -14,7 +14,6 @@ public sealed record CadenceAgentProfile(
 public sealed record CadenceOptions(
     Func<string, IChatClient> ChatClients,
     Func<string, CadenceAgentProfile> Profiles,
-    ICadenceRecordSink Records,
     ReviewerDoctrine ReviewerDoctrine,
     TimeProvider? TimeProvider = null,
     TimeSpan? GitTimeout = null,
@@ -28,15 +27,11 @@ public static class CadenceRegistration
         CadenceOptions options
     )
     {
-        services.AddSingleton(options.Records);
         services.AddSingleton(options.TimeProvider ?? TimeProvider.System);
         services.TryAddSingleton(_ => new GitProcess(timeout: options.GitTimeout));
         services.AddSingleton<DirtyWorkCheckpointPolicy>();
-        services.AddSingleton<CheckpointAcceptance>();
         services.AddSingleton(sp =>
             CadenceCapabilities.Create(
-                sp.GetRequiredService<CheckpointAcceptance>(),
-                options.Records,
                 sp.GetRequiredService<TimeProvider>(),
                 sp.GetRequiredService<DirtyWorkCheckpointPolicy>()
             )
@@ -49,7 +44,6 @@ public static class CadenceRegistration
             return new CadenceParticipantsFactory(
                 options.ChatClients,
                 options.Profiles,
-                options.Records,
                 options.ReviewerDoctrine,
                 skills,
                 sp.GetRequiredService<WorkspacePreparation>(),

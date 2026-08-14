@@ -3,18 +3,37 @@ using Cadence.Git;
 
 namespace Cadence;
 
-public sealed class PublicationOperation(GitProcess git, ICadenceRecordSink records)
+public sealed class PublicationOperation(GitProcess git, string reviewerDoctrineHash)
 {
     public async ValueTask<PublicationResultRecord> ExecuteAsync(
+        CadenceState state,
         string? explicitBranch,
         CancellationToken cancellationToken
     )
     {
-        var candidate =
-            await records.ReadPublicationCandidateAsync(cancellationToken)
+        var candidateSha =
+            state.AcceptedCandidateSha
             ?? throw new InvalidOperationException("Run has no accepted publication candidate.");
+        if (!string.Equals(state.CandidateSha, candidateSha, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The accepted publication candidate no longer matches the current candidate."
+            );
+        }
+        if (
+            !string.Equals(
+                state.ReviewerDecision?.DoctrineHash,
+                reviewerDoctrineHash,
+                StringComparison.Ordinal
+            )
+        )
+        {
+            throw new InvalidOperationException(
+                "The current Reviewer doctrine does not match the accepted review."
+            );
+        }
         var branch = string.IsNullOrWhiteSpace(explicitBranch)
-            ? $"cadence/{Slugify(candidate.PacketTitle)}-{candidate.CandidateSha[..8]}"
+            ? $"cadence/{Slugify(state.Packet.Title)}-{candidateSha[..8]}"
             : explicitBranch;
         if (!branch.StartsWith("cadence/", StringComparison.Ordinal))
         {
@@ -29,39 +48,39 @@ public sealed class PublicationOperation(GitProcess git, ICadenceRecordSink reco
             cancellationToken
         );
         var head = await RequireSuccessAsync(
-            candidate.WorkspacePath,
+            state.WorkspacePath,
             ["rev-parse", "HEAD"],
             "Could not read workspace HEAD",
             cancellationToken
         );
-        if (!string.Equals(head, candidate.CandidateSha, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(head, candidateSha, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"Workspace HEAD '{head}' does not equal candidate '{candidate.CandidateSha}'."
+                $"Workspace HEAD '{head}' does not equal candidate '{candidateSha}'."
             );
         }
         await RequireSuccessAsync(
-            candidate.Repository,
-            ["cat-file", "-e", candidate.PinnedBaseSha],
-            $"Pinned base '{candidate.PinnedBaseSha}' is not available",
+            state.Packet.Repository,
+            ["cat-file", "-e", state.PinnedBaseSha],
+            $"Pinned base '{state.PinnedBaseSha}' is not available",
             cancellationToken
         );
 
-        var existing = await ReadBranchAsync(candidate.Repository, branch, cancellationToken);
+        var existing = await ReadBranchAsync(state.Packet.Repository, branch, cancellationToken);
         if (existing is not null)
         {
-            return await ReconcileAsync(candidate, branch, existing, cancellationToken);
+            return Reconcile(state.Packet.Repository, candidateSha, branch, existing);
         }
 
         var push = await git.RunAsync(
-            candidate.WorkspacePath,
-            ["push", candidate.Repository, $"{candidate.CandidateSha}:refs/heads/{branch}"],
+            state.WorkspacePath,
+            ["push", state.Packet.Repository, $"{candidateSha}:refs/heads/{branch}"],
             cancellationToken
         );
         if (push.ExitCode != 0 || push.TimedOut)
         {
             var afterFailure = await ReadBranchAsync(
-                candidate.Repository,
+                state.Packet.Repository,
                 branch,
                 cancellationToken
             );
@@ -69,37 +88,34 @@ public sealed class PublicationOperation(GitProcess git, ICadenceRecordSink reco
             {
                 throw new InvalidOperationException($"git push failed: {push.Stderr.Trim()}");
             }
-            return await ReconcileAsync(candidate, branch, afterFailure, cancellationToken);
+            return Reconcile(state.Packet.Repository, candidateSha, branch, afterFailure);
         }
 
         var published =
-            await ReadBranchAsync(candidate.Repository, branch, cancellationToken)
+            await ReadBranchAsync(state.Packet.Repository, branch, cancellationToken)
             ?? throw new InvalidOperationException("Published branch could not be resolved.");
-        return await ReconcileAsync(candidate, branch, published, cancellationToken);
+        return Reconcile(state.Packet.Repository, candidateSha, branch, published);
     }
 
-    private async ValueTask<PublicationResultRecord> ReconcileAsync(
-        PublicationCandidateDocument candidate,
+    private static PublicationResultRecord Reconcile(
+        string repository,
+        string candidateSha,
         string branch,
-        string publishedSha,
-        CancellationToken cancellationToken
+        string publishedSha
     )
     {
-        if (
-            !string.Equals(publishedSha, candidate.CandidateSha, StringComparison.OrdinalIgnoreCase)
-        )
+        if (!string.Equals(publishedSha, candidateSha, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"Branch '{branch}' resolves to '{publishedSha}', not candidate '{candidate.CandidateSha}'."
+                $"Branch '{branch}' resolves to '{publishedSha}', not candidate '{candidateSha}'."
             );
         }
         var result = new PublicationResultRecord(
-            candidate.Repository,
+            repository,
             branch,
-            candidate.CandidateSha,
+            candidateSha,
             Reconciled: true
         );
-        await records.AcceptPublicationResultAsync(result, cancellationToken);
         return result;
     }
 

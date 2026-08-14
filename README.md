@@ -44,7 +44,7 @@ var cadence = Pipeline
     .Route(
         participants.Executor.Success,
         state => state.ExecutorTransition is ExecutorTransition.CheckpointWritten,
-        participants.Executor,
+        participants.Planner,
         "checkpoint written"
     )
     .Route(participants.Executor.Failed, participants.FailRun, "agent failed")
@@ -107,7 +107,8 @@ Reviewer can also ask you to decide a finding or whether to continue after the r
 limit. Cadence waits for the answer in the terminal and resumes the same live run.
 
 Cadence is a single-run pipeline, not a queue or background service. It does not manage
-campaigns, merge changes automatically, or resume a run after its process has stopped.
+campaigns or merge changes automatically. Its only process-recovery surface is explicit
+executor-phase resume from the retained workspace and accepted Tandem ledger state.
 
 ## Packet
 
@@ -210,8 +211,9 @@ do not grant permission to edit the workspace or run extra commands.
 
 ## Prepare Tandem
 
-Cadence consumes `Tandem`, `Tandem.Advanced`, `Tandem.Generators`, and `Tandem.Packets` through package
-references. Until those packages are published, refresh the ignored local feed:
+Cadence consumes `Tandem`, `Tandem.Advanced`, `Tandem.Generators`, `Tandem.Ledger`,
+`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` through package references.
+Until those packages are published, refresh the ignored local feed:
 
 ```sh
 task prepare
@@ -237,15 +239,18 @@ Then run Cadence from any directory:
 cadence run packet.md
 ```
 
-Interrupted executor-phase runs can resume from their retained workspace and accepted
-records with a fresh agent session:
+Executor-phase runs left `Running` or `Faulted` can resume from their retained workspace and
+accepted state in `~/.cadence/runs/<run-id>/ledger.sqlite3`, with fresh agent sessions. Pass
+either the run ID or its original packet path; packet lookup selects the newest matching
+resumable run. Ready, failed, and cancelled runs remain terminal:
 
 ```sh
 cadence resume <run-id>
+cadence resume packet.md
 ```
 
-Runs created before packet persistence require a packet explicitly. The supplied packet is
-authoritative for the resumed delivery:
+An optional packet can replace the delivery packet while preserving compatible accepted
+outcome state:
 
 ```sh
 cadence resume <run-id> --packet packet.md
@@ -253,9 +258,8 @@ cadence resume <run-id> --packet packet.md
 
 Resume preserves the run ID and dirty workspace, starts a distinct execution attempt, closes
 mutation authority, and routes through Planner before Executor continues. It does not replay
-the interrupted model session. New runs validate the retained workspace against the exact base
-SHA recorded when it was prepared; legacy runs use the retained workspace HEAD because that
-fact predates persistence.
+the interrupted model session. The retained workspace is validated against the exact accepted
+base SHA. Legacy `records.json` runs are not imported or resumable.
 
 Pass `--publish` to publish immediately after Reviewer acceptance, or publish later
 with the printed run ID:

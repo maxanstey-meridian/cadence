@@ -69,37 +69,30 @@ public sealed class CadenceStateTests
             ["README.md"],
             "Continue the implementation."
         );
-        var recovery = new RecoveryRecord(
-            TestSupport.Packet(),
-            "base-sha",
-            new OutcomeProgressDocument(
-                "accepted",
-                [
-                    new OutcomeProgress(
-                        "outcome-1",
-                        "Deliver the feature",
-                        OutcomeStatus.InProgress,
-                        ["README.md:1"],
-                        "Partially implemented.",
-                        "Finish the implementation."
-                    ),
-                ]
-            ),
-            new ProgressCheckpointRecord(
+        var persisted = TestSupport.State() with
+        {
+            PlannerDecision = decision,
+            PlannerConstraints = ["Preserve the contract."],
+            PlannerFailureCount = 1,
+            OutcomeLedger =
+            [
+                new OutcomeLedgerEntry(
+                    "outcome-1",
+                    "Deliver the feature",
+                    OutcomeStatus.InProgress,
+                    ["README.md:1"],
+                    "Partially implemented.",
+                    "Finish the implementation."
+                ),
+            ],
+            LatestCheckpoint = new WriteCheckpointRequest(
                 "Work is partially implemented.",
-                ["README.md"],
-                ["Preserve the contract."],
                 [],
                 "Finish the implementation."
             ),
-            decision,
-            ["Preserve the contract."],
-            1,
-            [],
-            null
-        );
+        };
 
-        var state = CadenceState.Recover(TestSupport.Packet(), "base-sha", "/workspace", recovery);
+        var state = persisted.Resume(TestSupport.Packet());
 
         state.MutationAuthorized.Should().BeFalse();
         state.PlannerConstraints.Should().Equal("Preserve the contract.");
@@ -112,9 +105,6 @@ public sealed class CadenceStateTests
             .Match<AskPlannerRequest>(request =>
                 request.QuestionType == PlannerQuestionType.SessionReliability
                 && request.Evidence.Any(value =>
-                    value.Contains("README.md", StringComparison.Ordinal)
-                )
-                && request.Evidence.Any(value =>
                     value.Contains("Checkpoint uncertainties", StringComparison.Ordinal)
                 )
             );
@@ -123,63 +113,45 @@ public sealed class CadenceStateTests
     [Fact]
     public void Recovery_rejects_runs_that_reached_candidate_verification()
     {
-        var recovery = new RecoveryRecord(
-            TestSupport.Packet(),
-            "base-sha",
-            null,
-            null,
-            null,
-            [],
-            0,
+        var persisted = TestSupport.State() with
+        {
+            VerificationResults =
             [
-                new VerificationResultRecord(
-                    "candidate",
-                    new VerificationResult(0, "task check", 0, "", "", TimeSpan.Zero, false)
-                ),
+                new VerificationResult(0, "task check", 0, "", "", TimeSpan.Zero, false),
             ],
-            null
-        );
+        };
 
-        var act = () =>
-            CadenceState.Recover(TestSupport.Packet(), "base-sha", "/workspace", recovery);
+        var act = () => persisted.Resume(TestSupport.Packet());
 
         act.Should().Throw<InvalidOperationException>().WithMessage("*executor-phase*");
     }
 
     [Fact]
-    public void Recovery_accepts_the_supplied_legacy_packet_as_authoritative()
+    public void Recovery_accepts_compatible_replacement_packet_content()
     {
-        var recovery = new RecoveryRecord(
-            null,
-            null,
-            new OutcomeProgressDocument(
-                "accepted",
-                [
-                    new OutcomeProgress(
-                        "other",
-                        "Different delivery",
-                        OutcomeStatus.NotStarted,
-                        [],
-                        "Not started.",
-                        "Start."
-                    ),
-                ]
-            ),
-            null,
-            null,
-            [],
-            0,
-            [],
-            null
-        );
-
         var packet = TestSupport.Packet() with { Commands = ["task generate"] };
 
-        var state = CadenceState.Recover(packet, "base-sha", "/workspace", recovery);
+        var state = TestSupport.State().Resume(packet);
 
         state.Packet.Should().BeSameAs(packet);
         state.OutcomeLedger.Single().OutcomeId.Should().Be("outcome-1");
         state.OutcomeLedger.Single().Status.Should().Be(OutcomeStatus.NotStarted);
+    }
+
+    [Fact]
+    public void Recovery_treats_the_supplied_packet_as_authoritative()
+    {
+        var packet = TestSupport.Packet() with
+        {
+            Repository = "/different/repository",
+            Base = "different-base",
+            Outcomes = [new PacketOutcome("replacement", "Deliver replacement behavior")],
+        };
+
+        var state = TestSupport.State().Resume(packet);
+
+        state.Packet.Should().BeSameAs(packet);
+        state.OutcomeLedger.Should().ContainSingle().Which.OutcomeId.Should().Be("replacement");
     }
 
     [Theory]
@@ -312,7 +284,7 @@ public sealed class CadenceStateTests
     }
 
     [Fact]
-    public void Reorient_authorizes_the_current_revision_and_preserves_accepted_constraints()
+    public void Reorient_authorizes_the_current_revision_and_replaces_accepted_constraints()
     {
         var state = TestSupport
             .State()
@@ -340,7 +312,7 @@ public sealed class CadenceStateTests
             new PlannerDecision(
                 PlannerDecisionValue.Reorient,
                 "The corrected approach is safe.",
-                [],
+                ["Use the existing seam."],
                 ["src/a.cs"],
                 "Continue from the corrected approach.",
                 "Use the existing seam and rerun focused verification."
@@ -349,7 +321,7 @@ public sealed class CadenceStateTests
 
         reoriented.MutationAuthorized.Should().BeTrue();
         reoriented.ApprovedApproachRevision.Should().Be(reoriented.ApproachRevision);
-        reoriented.PlannerConstraints.Should().Equal("Preserve the public contract.");
+        reoriented.PlannerConstraints.Should().Equal("Use the existing seam.");
     }
 
     [Fact]

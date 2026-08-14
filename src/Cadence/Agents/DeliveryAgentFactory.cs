@@ -6,7 +6,6 @@ namespace Cadence;
 internal sealed class CadenceAgentFactory(
     Func<string, IChatClient> chatClients,
     Func<string, CadenceAgentProfile> profileResolver,
-    ICadenceRecordSink records,
     AgentWorkspace<CadenceState> executorWorkspace,
     AgentWorkspace<CadenceState> reviewerWorkspace,
     IReadOnlyList<AgentSkill> skills
@@ -28,24 +27,7 @@ internal sealed class CadenceAgentFactory(
                 chatClients(profileName),
                 chatClients
             )
-            .UseHarness(CadenceHarnessInstructions.Value)
-            .WithMessageAugmentation(
-                async (_, cancellationToken) =>
-                    CadenceLedgerContextFormatter.Format(
-                        await records.ReadContextAsync(
-                            participantId switch
-                            {
-                                CadenceIds.Executor => CadenceLedgerRole.Executor,
-                                CadenceIds.Planner => CadenceLedgerRole.Planner,
-                                CadenceIds.Reviewer => CadenceLedgerRole.Reviewer,
-                                _ => throw new InvalidOperationException(
-                                    $"Unknown Cadence agent '{participantId}'."
-                                ),
-                            },
-                            cancellationToken
-                        )
-                    )
-            );
+            .UseHarness(CadenceHarnessInstructions.Value);
 
         foreach (var skill in skills)
         {
@@ -57,7 +39,6 @@ internal sealed class CadenceAgentFactory(
 
     internal CadenceAgentProfile ResolveProfile(string profileName) => profileResolver(profileName);
 
-    internal ICadenceRecordSink Records => records;
     internal AgentWorkspace<CadenceState> ExecutorWorkspace => executorWorkspace;
     internal AgentWorkspace<CadenceState> ReviewerWorkspace => reviewerWorkspace;
 }

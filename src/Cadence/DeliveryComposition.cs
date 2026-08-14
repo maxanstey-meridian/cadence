@@ -74,7 +74,7 @@ public sealed class CadenceComposition
             .Route(
                 on: cadence.Executor.Success,
                 when: state => state.ExecutorTransition is ExecutorTransition.CheckpointWritten,
-                to: cadence.Executor,
+                to: cadence.Planner,
                 label: "checkpoint written"
             )
             .Route(on: cadence.Executor.Failed, to: cadence.FailRun, label: "agent failed")

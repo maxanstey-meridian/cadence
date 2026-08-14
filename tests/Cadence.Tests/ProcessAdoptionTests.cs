@@ -176,12 +176,7 @@ public sealed class ProcessAdoptionTests
                 Verification = [command],
             };
             var stage = new VerificationStage(
-                new VerificationOperation(
-                    new GitProcess(),
-                    new FakeRecordSink(),
-                    timeout,
-                    outputBound
-                )
+                new VerificationOperation(new GitProcess(), timeout, outputBound)
             );
             var pipeline = Pipeline.Start(stage, "process-adoption").Build(stage);
             var run = await new PipelineRunner().RunAsync(

@@ -72,7 +72,7 @@ public sealed class PlannerSliceTests
     [InlineData(PlannerDecisionValue.Proceed, false)]
     [InlineData(PlannerDecisionValue.ProceedWithConstraints, true)]
     [InlineData(PlannerDecisionValue.ReviseApproach, true)]
-    [InlineData(PlannerDecisionValue.Reorient, true)]
+    [InlineData(PlannerDecisionValue.Reorient, false)]
     [InlineData(PlannerDecisionValue.NeedsHuman, true)]
     [InlineData(PlannerDecisionValue.Stop, true)]
     public void Only_accepted_decisions_replace_active_constraints(
@@ -83,10 +83,11 @@ public sealed class PlannerSliceTests
         var state = TestSupport.State() with { PlannerConstraints = ["Existing obligation"] };
         var decision = Decision(value) with
         {
-            Constraints =
-                value == PlannerDecisionValue.ProceedWithConstraints
-                    ? ["Replacement obligation"]
-                    : [],
+            Constraints = value
+                is PlannerDecisionValue.ProceedWithConstraints
+                    or PlannerDecisionValue.Reorient
+                ? ["Replacement obligation"]
+                : [],
             CorrectedApproach = value
                 is PlannerDecisionValue.ReviseApproach
                     or PlannerDecisionValue.Reorient
@@ -104,11 +105,12 @@ public sealed class PlannerSliceTests
         state
             .PlannerConstraints.Should()
             .Equal(
-                preservesExisting
-                    ? value == PlannerDecisionValue.ProceedWithConstraints
-                        ? ["Replacement obligation"]
-                        : ["Existing obligation"]
-                    : []
+                value
+                    is PlannerDecisionValue.ProceedWithConstraints
+                        or PlannerDecisionValue.Reorient
+                    ? ["Replacement obligation"]
+                : preservesExisting ? ["Existing obligation"]
+                : []
             );
         state
             .MutationAuthorized.Should()
@@ -120,8 +122,7 @@ public sealed class PlannerSliceTests
     [Fact]
     public async Task Planner_failure_stage_counts_failures_without_discarding_state()
     {
-        var records = new FakeRecordSink();
-        var stage = new PlannerFailureStage(records).Definition;
+        var stage = new PlannerFailureStage().Definition;
         var complete = PipelineNodes.Complete(new PlannerFailureCounted());
         var state = TestSupport.State() with
         {
@@ -150,7 +151,6 @@ public sealed class PlannerSliceTests
         );
 
         result.State.PlannerFailureCount.Should().Be(1);
-        records.PlannerFailureCount.Should().Be(1);
         result.State.PlannerConstraints.Should().Equal("Keep this obligation");
         result.State.OutcomeLedger.Should().Equal(state.OutcomeLedger);
     }
@@ -178,36 +178,11 @@ public sealed class PlannerSliceTests
         prompt.Should().Contain("Do not repeat the instruction");
         prompt.Should().Contain("SafeNextAction for every response");
         prompt.Should().Contain("Reorient only when QuestionType is SessionReliability");
-        prompt.Should().Contain("routes a fresh Executor that may continue");
+        prompt.Should().Contain("routes a fresh");
+        prompt.Should().Contain("Executor that may continue");
+        prompt.Should().Contain("replaces active accepted constraints");
         prompt.Should().Contain("Active accepted planner constraints");
         prompt.Should().Contain("Latest planner decision");
-    }
-
-    [Fact]
-    public void Durable_context_separates_active_constraints_from_decision_history()
-    {
-        var text = CadenceLedgerContextFormatter.Format(
-            new CadenceLedgerContext(
-                null,
-                null,
-                null,
-                ["Active obligation"],
-                [
-                    Decision(PlannerDecisionValue.ReviseApproach) with
-                    {
-                        CorrectedApproach = "Use the correct owner.",
-                    },
-                ],
-                [],
-                [],
-                []
-            )
-        );
-
-        text.Should().Contain("Active accepted Planner constraints:");
-        text.Should().Contain("- Active obligation");
-        text.Should().Contain("Recent Planner decisions:");
-        text.Should().NotContain("constraints=Use the correct owner");
     }
 
     [Fact]
@@ -218,6 +193,11 @@ public sealed class PlannerSliceTests
         prompt.Should().Contain("QuestionType SessionReliability");
         prompt.Should().Contain("discards this conversation before Planner runs");
         prompt.Should().Contain("Every checkpoint closes mutation authority");
+        prompt.Should().Contain("revocable, invocation-scoped lease");
+        prompt.Should().Contain("A transition from true to false");
+        prompt.Should().Contain("Checkpoints are periodic");
+        prompt.Should().Contain("however recent, does not satisfy the current trigger");
+        prompt.Should().Contain("do not follow the normal closed-authority ask_planner path");
         prompt.Should().Contain("Never write \"none\" as an uncertainty");
     }
 
@@ -225,7 +205,7 @@ public sealed class PlannerSliceTests
     public async Task Planner_unavailable_is_a_typed_terminal_failure_after_two_counted_failures()
     {
         var unavailable = PipelineNodes.Failed(new PlannerUnavailable());
-        var stage = new PlannerFailureStage(new FakeRecordSink()).Definition;
+        var stage = new PlannerFailureStage().Definition;
         var state = TestSupport.State().RecordPlannerFailure();
         var pipeline = Pipeline
             .Start(stage, "planner-unavailable-proof")

@@ -41,7 +41,6 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
             .When(decision =>
                 decision.Decision
                     is PlannerDecisionValue.ReviseApproach
-                        or PlannerDecisionValue.Reorient
                         or PlannerDecisionValue.NeedsHuman
                         or PlannerDecisionValue.Stop
             );

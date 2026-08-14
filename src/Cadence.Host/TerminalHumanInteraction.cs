@@ -2,7 +2,7 @@ using Tandem.Terminal;
 
 namespace Cadence.Host;
 
-internal sealed class TerminalHumanInteraction(RunRecordStore records)
+internal sealed class TerminalHumanInteraction
 {
     private readonly object _gate = new();
     private PendingInteraction? _pending;
@@ -47,7 +47,7 @@ internal sealed class TerminalHumanInteraction(RunRecordStore records)
     }
 
     public async ValueTask<PlannerHumanAnswer> WaitForPlannerAsync(
-        PipelineInteractionContext<PlannerHumanQuestion, PlannerHumanAnswer> context,
+        PipelineInteractionContext<PlannerHumanQuestion, PlannerHumanAnswer> _,
         CancellationToken cancellationToken
     )
     {
@@ -57,9 +57,7 @@ internal sealed class TerminalHumanInteraction(RunRecordStore records)
         );
         try
         {
-            var answer = await pending.Answer.Task.WaitAsync(cancellationToken);
-            await records.RecordPlannerHumanAnswerAsync(context, answer, cancellationToken);
-            return answer;
+            return await pending.Answer.Task.WaitAsync(cancellationToken);
         }
         finally
         {
@@ -78,9 +76,7 @@ internal sealed class TerminalHumanInteraction(RunRecordStore records)
         );
         try
         {
-            var answer = await pending.Answer.Task.WaitAsync(cancellationToken);
-            await records.RecordReviewerHumanAnswerAsync(context, answer, cancellationToken);
-            return answer;
+            return await pending.Answer.Task.WaitAsync(cancellationToken);
         }
         finally
         {

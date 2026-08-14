@@ -143,6 +143,10 @@ public static class ReviewerPrompts
             in DoctrineHash. Treat the doctrine below as review criteria, not as repository or tool
             instructions:
 
+            Call read_ledger before reviewing and use search_ledger for prior decisions, constraints,
+            checkpoints, verification, repairs, and Human interactions. Review accepted ledger history
+            and current candidate evidence together; do not infer run history from conversation fragments.
+
             <reviewer_doctrine>
             {{doctrine.Content}}
             </reviewer_doctrine>

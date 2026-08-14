@@ -43,6 +43,7 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
                 VerifiedCandidateSha = null,
                 ReviewerDecision = null,
                 ReviewerCandidateSha = null,
+                AcceptedCandidateSha = null,
             }
         );
     }

@@ -7,7 +7,6 @@ namespace Cadence;
 public sealed class CadenceParticipantsFactory(
     Func<string, IChatClient> chatClients,
     Func<string, CadenceAgentProfile> profileResolver,
-    ICadenceRecordSink records,
     ReviewerDoctrine reviewerDoctrine,
     IReadOnlyList<AgentSkill> skills,
     WorkspacePreparation workspacePreparation,
@@ -63,13 +62,12 @@ public sealed class CadenceParticipantsFactory(
         var agents = new CadenceAgentFactory(
             chatClients,
             profileResolver,
-            records,
             executorWorkspace,
             reviewerWorkspace,
             skills
         );
         return new CadenceParticipants(
-            new PrepareWorkspaceStage(workspacePreparation, records),
+            new PrepareWorkspaceStage(workspacePreparation),
             ExecutorAgent.Create(
                 agents,
                 askPlanner,
@@ -79,11 +77,11 @@ public sealed class CadenceParticipantsFactory(
                 dirtyWorkCheckpoint
             ),
             PlannerAgent.Create(agents),
-            new PlannerFailureStage(records).Definition,
+            new PlannerFailureStage().Definition,
             new CaptureCandidateStage(git),
-            new VerificationStage(new VerificationOperation(git, records)),
+            new VerificationStage(new VerificationOperation(git)),
             ReviewerAgent.Create(agents, reviewerDoctrine),
-            new AcceptCandidateStage(records, reviewerDoctrine, git),
+            new AcceptCandidateStage(reviewerDoctrine, git),
             PipelineNodes.Complete(new RunReady()),
             PipelineNodes.Failed(new RunFailed()),
             PipelineNodes.Failed(new PlannerUnavailable()),

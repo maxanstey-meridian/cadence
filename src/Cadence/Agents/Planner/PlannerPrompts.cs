@@ -9,20 +9,37 @@ public static class PlannerPrompts
         var packet = state.Packet;
         var outcomes = string.Join(
             "\n",
-            packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
+            state.OutcomeLedger.Select(outcome =>
+                $"- [{outcome.OutcomeId}] {outcome.Description}\n"
+                + $"  Status: {outcome.Status}\n"
+                + $"  Implementation state: {outcome.ImplementationState}\n"
+                + $"  Evidence: {(outcome.Evidence.Count == 0 ? "(none)" : string.Join("; ", outcome.Evidence))}\n"
+                + $"  Next action: {outcome.NextAction ?? "(none)"}"
+            )
         );
+        var checkpoint = state.LatestCheckpoint is { } value
+            ? $"Summary: {value.Summary}\n"
+                + $"Uncertainties: {string.Join("; ", value.Uncertainties)}\n"
+                + $"Next action: {value.NextAction}"
+            : "(none)";
         var constraints =
             packet.Constraints.Count > 0
                 ? string.Join("\n", packet.Constraints.Select(c => $"- {c}"))
                 : "(none)";
-        var request = state.ExecutorTransition is ExecutorTransition.PlannerRequested fact
-            ? $"Question type: {fact.Request.QuestionType}\n"
-                + $"Current slice: {fact.Request.CurrentSlice}\n"
-                + $"Question: {fact.Request.Question}\n"
-                + $"Proposed approach: {fact.Request.ProposedApproach}\n"
-                + $"Evidence:\n{string.Join("\n", fact.Request.Evidence.Select(item => $"- {item}"))}\n"
-                + RenderFailedInstruction(fact.Request.FailedInstruction)
-            : "(no request provided)";
+        var request = state.ExecutorTransition switch
+        {
+            ExecutorTransition.PlannerRequested fact =>
+                $"Question type: {fact.Request.QuestionType}\n"
+                    + $"Current slice: {fact.Request.CurrentSlice}\n"
+                    + $"Question: {fact.Request.Question}\n"
+                    + $"Proposed approach: {fact.Request.ProposedApproach}\n"
+                    + $"Evidence:\n{string.Join("\n", fact.Request.Evidence.Select(item => $"- {item}"))}\n"
+                    + RenderFailedInstruction(fact.Request.FailedInstruction),
+            ExecutorTransition.CheckpointWritten =>
+                "Checkpoint review requested. Inspect the latest checkpoint, authoritative outcome ledger, "
+                    + "and current worktree, then decide whether and under what constraints Executor may continue.",
+            _ => "(no request provided)",
+        };
         var activeConstraints =
             state.PlannerConstraints.Count > 0
                 ? string.Join("\n", state.PlannerConstraints.Select(c => $"- {c}"))
@@ -48,8 +65,11 @@ public static class PlannerPrompts
             Implementation context:
             {packet.ImplementationContext}
 
-            Outcomes:
+            Authoritative outcome ledger:
             {outcomes}
+
+            Latest continuity checkpoint (non-authoritative claims):
+            {checkpoint}
 
             Constraints:
             {constraints}
@@ -78,6 +98,11 @@ public static class PlannerPrompts
 
     internal const string Instructions = """
         You are Tandem's planner agent.
+
+        Call read_ledger before deciding any resumed, rotated, or compacted consultation. Use
+        search_ledger to retrieve relevant Executor questions, prior decisions, constraints,
+        checkpoints, and Human interactions. Do not rely on a partial conversation when accepted
+        ledger history is available.
 
         You decide engineering direction; you do not implement. Review the packet outcomes
         and constraints, the executor's question, proposed approach, and evidence. The
@@ -120,15 +145,16 @@ public static class PlannerPrompts
         an incomplete implementation surface, or a false premise.
 
         Return Reorient only when QuestionType is SessionReliability. Provide CorrectedApproach
-        and one concrete SafeNextAction. Reorient preserves accepted constraints, authorizes the
-        corrected approach for the current revision, and routes a fresh Executor that may continue
-        without repeating the same approval cycle. For every other question type Reorient is
-        invalid. Fail closed rather than using Reorient as a general retry.
+        and one concrete SafeNextAction. Reorient replaces active accepted constraints with
+        Constraints, authorizes the corrected approach for the current revision, and routes a fresh
+        Executor that may continue without repeating the same approval cycle. Include every
+        still-live constraint; use an empty array only when none remain. For every other question
+        type Reorient is invalid. Fail closed rather than using Reorient as a general retry.
 
         A Planner consultation is not evidence that prior obligations are closed. Active accepted
-        constraints remain open until repository evidence proves closure. Only Proceed and
-        ProceedWithConstraints replace them; Reorient authorizes its corrected approach while
-        preserving them, and other non-authorizing decisions preserve them.
+        constraints remain open until repository evidence proves closure. Proceed,
+        ProceedWithConstraints, and Reorient replace them; other non-authorizing decisions preserve
+        them.
 
         If a prior Planner instruction failed, treat the failure as contradictory evidence. Address
         the failing command and observed result directly. Do not repeat the instruction without

@@ -97,6 +97,13 @@ inspect further rather than selecting the convenient one.
 Use only tools exposed to the current agent. Do not invent tools, arguments,
 capabilities, files, commands, or URLs.
 
+When `read_ledger` is available, it is the authoritative accepted Tandem run history. Use it
+after resume, session rotation, or compaction, and whenever conversation context is missing or
+contradictory. Use `search_ledger` to locate prior questions, decisions, constraints, checkpoints,
+accepted state, verification, and Human interactions. Do not reconstruct durable lifecycle facts
+from conversation fragments or repeat broad repository investigation when the ledger already
+contains the accepted fact.
+
 - Prefer search and targeted reads over guessing locations.
 - Read independent relevant files in parallel when the available tool surface
   supports it and ordering is unnecessary.

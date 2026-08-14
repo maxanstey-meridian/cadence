@@ -1,5 +1,4 @@
 using Cadence.Git;
-using Cadence.Host;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
 
@@ -141,64 +140,6 @@ public sealed class PipelineBehaviorTests
         finally
         {
             Directory.Delete(repository, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task Planner_typed_decision_reaches_record_store_without_reserialization()
-    {
-        var repository = TestSupport.CreateGitRepository();
-        var recordDirectory = Path.Combine(
-            Path.GetTempPath(),
-            $"cadence-typed-records-{Guid.NewGuid():N}"
-        );
-        var recordPath = Path.Combine(recordDirectory, "records.json");
-        try
-        {
-            var planner = new ScriptedChatClient(
-                "planner",
-                Read("planner-read"),
-                TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed))
-            );
-            var store = new RunRecordStore(recordPath);
-            var participant = BuildParticipants(_ => planner).Create().Planner;
-            var state = TestSupport.State(repository) with
-            {
-                Packet = TestSupport.Packet() with { Repository = repository },
-                ExecutorTransition = new ExecutorTransition.PlannerRequested(
-                    new AskPlannerRequest(
-                        PlannerQuestionType.ImplementationSurfaceReview,
-                        "requested file",
-                        "May I implement?",
-                        "Implement the packet directly.",
-                        ["README.md"]
-                    )
-                ),
-            };
-
-            var result = await new PipelineRunner().RunAsync(
-                Pipeline.Start(participant, "planner-typed-record").Build(participant),
-                state,
-                new PipelineRunOptions(Observer: store),
-                TestContext.Current.CancellationToken
-            );
-
-            result.State.PlannerDecision!.Decision.Should().Be(PlannerDecisionValue.Proceed);
-            var context = await store.ReadContextAsync(
-                CadenceLedgerRole.Reviewer,
-                TestContext.Current.CancellationToken
-            );
-            var recorded = context.PlannerDecisions.Should().ContainSingle().Which;
-            recorded.Decision.Should().Be(PlannerDecisionValue.Proceed);
-            recorded.SafeNextAction.Should().Be("Implement through the inspected seam.");
-        }
-        finally
-        {
-            Directory.Delete(repository, recursive: true);
-            if (Directory.Exists(recordDirectory))
-            {
-                Directory.Delete(recordDirectory, recursive: true);
-            }
         }
     }
 
@@ -396,17 +337,14 @@ public sealed class PipelineBehaviorTests
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed))
             );
             var reviewer = Reviewer(RequestChangesJson(), AcceptJson());
-            var records = new FakeRecordSink();
-            var factory = BuildParticipants(
-                profile =>
-                    profile switch
-                    {
-                        "executor" => executor,
-                        "planner" => planner,
-                        "reviewer" => reviewer,
-                        _ => throw new InvalidOperationException(profile),
-                    },
-                records
+            var factory = BuildParticipants(profile =>
+                profile switch
+                {
+                    "executor" => executor,
+                    "planner" => planner,
+                    "reviewer" => reviewer,
+                    _ => throw new InvalidOperationException(profile),
+                }
             );
             var packet = TestSupport.Packet() with
             {
@@ -426,18 +364,6 @@ public sealed class PipelineBehaviorTests
             result.State.ReviewRepairRequired.Should().BeFalse();
             executor.CallCount.Should().Be(11);
             File.ReadAllText(Path.Combine(workspace, "feature.txt")).Should().Be("repaired\n");
-            records.VerificationResults.Should().HaveCount(2);
-            records
-                .VerificationResults.Select(x => x.CandidateSha)
-                .Distinct()
-                .Should()
-                .HaveCount(2);
-            records
-                .VerificationResults.GroupBy(x => x.CandidateSha)
-                .Should()
-                .AllSatisfy(candidate =>
-                    candidate.Select(x => x.Result.Command).Should().Equal(packet.Verification)
-                );
         }
         finally
         {
@@ -624,7 +550,7 @@ public sealed class PipelineBehaviorTests
     }
 
     [Fact]
-    public async Task Dirty_checkpoint_lifecycle_retains_session_and_revokes_authority_until_planner_reapproves()
+    public async Task Dirty_checkpoint_routes_directly_to_planner_before_executor_continues()
     {
         var started = DateTimeOffset.Parse("2026-08-11T10:00:00Z");
         var time = new FakeTimeProvider(started);
@@ -639,8 +565,6 @@ public sealed class PipelineBehaviorTests
                 Write("first", "first.txt", "first\n"),
                 Write("blocked", "blocked.txt", "blocked\n"),
                 WriteCheckpoint("checkpoint", []),
-                Write("blocked-after-checkpoint", "blocked-after.txt", "blocked\n"),
-                AskPlanner("reapprove"),
                 Write("after-approval", "after.txt", "after\n"),
                 AskPlanner("final-ask")
             )
@@ -662,12 +586,11 @@ public sealed class PipelineBehaviorTests
                 Read("planner-read-stop"),
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Stop))
             );
-            var records = new FakeRecordSink();
             var factory = BuildParticipants(
                 profile => profile == "executor" ? executor : planner,
-                records,
                 time
             );
+            var observer = new RecordingPersistenceObserver();
 
             var result = await new PipelineRunner().RunAsync(
                 new CadenceComposition(factory).Build(),
@@ -680,17 +603,29 @@ public sealed class PipelineBehaviorTests
                     workspace,
                     time
                 ),
-                new PipelineRunOptions(Observer: new NoOpPersistenceObserver()),
+                new PipelineRunOptions(Observer: observer),
                 TestContext.Current.CancellationToken
             );
 
             result.Succeeded.Should().BeFalse();
             File.Exists(Path.Combine(workspace, "first.txt")).Should().BeTrue();
             File.Exists(Path.Combine(workspace, "blocked.txt")).Should().BeFalse();
-            File.Exists(Path.Combine(workspace, "blocked-after.txt")).Should().BeFalse();
             File.Exists(Path.Combine(workspace, "after.txt")).Should().BeTrue();
-            records.Checkpoints.Should().ContainSingle();
             result.State.MutationAuthorized.Should().BeFalse();
+            executor.CallCount.Should().Be(7);
+            var starts = observer
+                .Observations.OfType<PipelineStepStarted>()
+                .Select(observation => observation.StepId)
+                .ToArray();
+            starts
+                .Should()
+                .ContainInOrder(
+                    CadenceIds.Executor,
+                    CadenceIds.Planner,
+                    CadenceIds.Executor,
+                    CadenceIds.Planner,
+                    CadenceIds.Executor
+                );
             executor
                 .Requests[5]
                 .Should()
@@ -711,7 +646,7 @@ public sealed class PipelineBehaviorTests
     }
 
     [Fact]
-    public async Task Token_threshold_accepts_checkpoint_and_rotates_to_a_fresh_executor_session()
+    public async Task Token_threshold_checkpoint_routes_directly_to_planner()
     {
         var repository = TestSupport.CreateGitRepository();
         var workspace = Path.Combine(Path.GetTempPath(), $"cadence-token-{Guid.NewGuid():N}");
@@ -723,19 +658,19 @@ public sealed class PipelineBehaviorTests
                 "executor",
                 highUsage,
                 WriteCheckpoint("token-checkpoint"),
-                AskPlanner("fresh-session-ask")
+                AskPlanner("fresh-session-stop")
             );
             var planner = new ScriptedChatClient(
                 "planner",
-                Read("planner-read"),
+                Read("planner-read-reapprove"),
+                TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed)),
+                Read("planner-read-stop"),
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Stop))
             );
-            var records = new FakeRecordSink();
             var factory = BuildParticipants(
                 profile => profile == "executor" ? executor : planner,
-                records,
                 TimeProvider.System,
-                _ => new CadenceAgentProfile(100, 20, 80)
+                profiles: _ => new CadenceAgentProfile(100, 20, 80)
             );
 
             var result = await new PipelineRunner().RunAsync(
@@ -753,9 +688,14 @@ public sealed class PipelineBehaviorTests
             );
 
             result.Succeeded.Should().BeFalse();
-            records.Checkpoints.Should().ContainSingle();
             result.State.LatestCheckpoint!.Summary.Should().Be("Durable checkpoint");
             executor.CallCount.Should().Be(3);
+            executor
+                .Requests[1]
+                .Should()
+                .Contain(message =>
+                    message.Text.Contains("route the checkpoint directly", StringComparison.Ordinal)
+                );
             executor
                 .Requests[2]
                 .Should()
@@ -782,7 +722,7 @@ public sealed class PipelineBehaviorTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Every_checkpoint_revokes_authority_and_routes_executor_to_planner(
+    public async Task Every_checkpoint_revokes_authority_and_preserves_planner_constraints(
         bool hasUncertainties
     )
     {
@@ -824,8 +764,8 @@ public sealed class PipelineBehaviorTests
             result.State.PlannerConstraints.Should().Equal("Preserve the public contract.");
             result
                 .State.ExecutorTransition.Should()
-                .BeOfType<ExecutorTransition.PlannerRequested>();
-            executor.CallCount.Should().Be(2);
+                .BeOfType<ExecutorTransition.CheckpointWritten>();
+            executor.CallCount.Should().Be(1);
         }
         finally
         {
@@ -894,53 +834,37 @@ public sealed class PipelineBehaviorTests
                 Read("planner-read-stop"),
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Stop))
             );
-            var records = new FakeRecordSink
-            {
-                Context = new CadenceLedgerContext(
-                    new OutcomeProgressDocument(
-                        "packet",
-                        [
-                            new OutcomeProgress(
-                                "outcome-1",
-                                "Deliver the feature",
-                                OutcomeStatus.InProgress,
-                                ["ledger evidence"],
-                                "Durable implementation state",
-                                "Durable next action"
-                            ),
-                        ]
-                    ),
-                    null,
-                    new ProgressCheckpointRecord(
-                        "Durable checkpoint summary",
-                        ["durable.txt"],
-                        ["Preserve durable constraint"],
-                        ["Durable uncertainty"],
-                        "Ask Planner"
-                    ),
-                    ["Preserve durable constraint"],
-                    [
-                        new PlannerDecision(
-                            PlannerDecisionValue.ProceedWithConstraints,
-                            "Durable prior decision",
-                            ["Preserve durable constraint"],
-                            ["src/a.cs"],
-                            "Continue safely."
-                        ),
-                    ],
-                    [],
-                    [],
-                    []
-                ),
-            };
             var factory = BuildParticipants(
                 profile => profile == "executor" ? executor : planner,
-                records
+                timeProvider: null
             );
             var state = TestSupport.State(workspace) with
             {
                 Packet = TestSupport.Packet() with { Repository = repository },
                 PlannerConstraints = ["Preserve durable constraint"],
+                OutcomeLedger =
+                [
+                    new OutcomeLedgerEntry(
+                        "outcome-1",
+                        "Deliver the feature",
+                        OutcomeStatus.InProgress,
+                        ["ledger evidence"],
+                        "Durable implementation state",
+                        "Durable next action"
+                    ),
+                ],
+                LatestCheckpoint = new WriteCheckpointRequest(
+                    "Durable checkpoint summary",
+                    ["Durable uncertainty"],
+                    "Ask Planner"
+                ),
+                PlannerDecision = new PlannerDecision(
+                    PlannerDecisionValue.ProceedWithConstraints,
+                    "Durable prior decision",
+                    ["Preserve durable constraint"],
+                    ["src/a.cs"],
+                    "Continue safely."
+                ),
             };
 
             var result = await new PipelineRunner().RunAsync(
@@ -952,7 +876,7 @@ public sealed class PipelineBehaviorTests
 
             result.Succeeded.Should().BeFalse();
             File.Exists(Path.Combine(workspace, "reoriented.txt")).Should().BeTrue();
-            result.State.PlannerConstraints.Should().Equal("Preserve durable constraint");
+            result.State.PlannerConstraints.Should().BeEmpty();
             result.State.MutationAuthorized.Should().BeFalse();
             executor
                 .Requests[2]
@@ -964,8 +888,9 @@ public sealed class PipelineBehaviorTests
             );
             freshContext.Should().Contain("Durable implementation state");
             freshContext.Should().Contain("Durable checkpoint summary");
-            freshContext.Should().Contain("Preserve durable constraint");
-            freshContext.Should().Contain("Durable prior decision");
+            freshContext.Should().Contain("Active accepted Planner constraints:");
+            freshContext.Should().Contain("Latest Planner decision: Reorient");
+            freshContext.Should().NotContain("Durable prior decision");
         }
         finally
         {
@@ -998,7 +923,6 @@ public sealed class PipelineBehaviorTests
                 TestSupport.Text(PlannerDecisionJson(PlannerDecisionValue.Proceed))
             );
             var reviewer = Reviewer(AcceptJson());
-            var records = new FakeRecordSink();
             var factory = BuildParticipants(
                 profile =>
                     profile switch
@@ -1008,7 +932,7 @@ public sealed class PipelineBehaviorTests
                         "reviewer" => reviewer,
                         _ => throw new InvalidOperationException(profile),
                     },
-                records
+                timeProvider: null
             );
             var packet = TestSupport.Packet() with
             {
@@ -1028,7 +952,6 @@ public sealed class PipelineBehaviorTests
             result.State.VerifiedCandidateSha.Should().Be(result.State.CandidateSha);
             result.State.ReviewerCandidateSha.Should().Be(result.State.CandidateSha);
             result.State.ReviewerDecision!.Decision.Should().Be(ReviewDecisionValue.Accept);
-            records.Candidate!.CandidateSha.Should().Be(result.State.CandidateSha);
             executor
                 .Requests[2]
                 .Should()
@@ -1055,27 +978,19 @@ public sealed class PipelineBehaviorTests
 
     private static CadenceParticipantsFactory BuildParticipants(
         Func<string, IChatClient> clients,
-        FakeRecordSink? records = null,
         TimeProvider? timeProvider = null,
         Func<string, CadenceAgentProfile>? profiles = null,
         IReadOnlyList<AgentSkill>? skills = null
     )
     {
-        records ??= new FakeRecordSink();
         timeProvider ??= TimeProvider.System;
         profiles ??= _ => new CadenceAgentProfile(200_000, 32_000, 80);
         var git = new GitProcess();
         var checkpoint = new DirtyWorkCheckpointPolicy(git, timeProvider);
-        var capabilities = CadenceCapabilities.Create(
-            new CheckpointAcceptance(git, records),
-            records,
-            timeProvider,
-            checkpoint
-        );
+        var capabilities = CadenceCapabilities.Create(timeProvider, checkpoint);
         return new CadenceParticipantsFactory(
             clients,
             profiles,
-            records,
             TestSupport.Doctrine(),
             skills ?? [],
             new WorkspacePreparation(git),

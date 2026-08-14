@@ -80,8 +80,7 @@ public sealed class CandidateLifecycleTests
                     "printf 'red-out'; printf 'red-error' >&2; printf 'generated' > generated.txt; exit 7",
                 ],
             };
-            var records = new FakeRecordSink();
-            var stage = new VerificationStage(new VerificationOperation(new GitProcess(), records));
+            var stage = new VerificationStage(new VerificationOperation(new GitProcess()));
             var pipeline = Pipeline.Start(stage, "red-verification").Build(stage);
             var result = await new PipelineRunner().RunAsync(
                 pipeline,
@@ -109,11 +108,6 @@ public sealed class CandidateLifecycleTests
                 TestContext.Current.CancellationToken
             );
             status.Stdout.Should().BeEmpty();
-            records
-                .VerificationResults.Should()
-                .ContainSingle()
-                .Which.CandidateSha.Should()
-                .Be(candidate);
         }
         finally
         {

@@ -1,19 +1,11 @@
 namespace Cadence;
 
-public sealed class PlannerFailureStage(ICadenceRecordSink records)
+public sealed class PlannerFailureStage
 {
     public IGeneratedPipelineStep<CadenceState, GeneratedStepCompletion> Definition { get; } =
         PipelineNodes.Stage<CadenceState>(
             CadenceIds.PlannerFailure,
-            async (state, cancellationToken) =>
-            {
-                var failed = state.RecordPlannerFailure();
-                await records.AcceptPlannerFailureCountAsync(
-                    failed.PlannerFailureCount,
-                    cancellationToken
-                );
-                return failed;
-            }
+            (state, _) => ValueTask.FromResult(state.RecordPlannerFailure())
         );
 }
 

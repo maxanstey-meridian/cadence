@@ -1,8 +1,8 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Cadence.Host;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
+using Tandem.Ledger;
 using Tandem.OpenAICompatible;
 using Tandem.Packets;
 using Tandem.Terminal;
@@ -12,132 +12,44 @@ namespace Cadence.Tests;
 public sealed class HostBoundaryTests
 {
     [Fact]
-    public async Task Run_record_persists_the_complete_packet_for_process_recovery()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-recovery-{Guid.NewGuid():N}");
-        try
-        {
-            var packet = TestSupport.Packet() with { Commands = ["task generate"] };
-            var store = new RunRecordStore(Path.Combine(directory, "records.json"));
-
-            await store.InitializeAsync(packet, TestContext.Current.CancellationToken);
-
-            var recovery = await store.ReadRecoveryAsync(TestContext.Current.CancellationToken);
-            recovery.Packet.Should().BeEquivalentTo(packet);
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task Run_record_persists_workspace_and_planner_recovery_facts()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-recovery-{Guid.NewGuid():N}");
-        try
-        {
-            var store = new RunRecordStore(Path.Combine(directory, "records.json"));
-            await store.InitializeAsync(
-                TestSupport.Packet(),
-                TestContext.Current.CancellationToken
-            );
-            await store.AcceptWorkspaceAsync(
-                new WorkspacePreparationRecord("pinned-sha"),
-                TestContext.Current.CancellationToken
-            );
-            await store.AcceptPlannerFailureCountAsync(1, TestContext.Current.CancellationToken);
-
-            var recovery = await store.ReadRecoveryAsync(TestContext.Current.CancellationToken);
-
-            recovery.PinnedBaseSha.Should().Be("pinned-sha");
-            recovery.PlannerFailureCount.Should().Be(1);
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task Missing_run_record_is_not_treated_as_a_legacy_run()
-    {
-        var path = Path.Combine(
-            Path.GetTempPath(),
-            $"cadence-missing-{Guid.NewGuid():N}",
-            "records.json"
-        );
-        var store = new RunRecordStore(path);
-
-        var act = async () => await store.ReadRecoveryAsync(TestContext.Current.CancellationToken);
-
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*not found*");
-    }
-
-    [Fact]
     public async Task Terminal_human_interaction_submits_typed_answers_through_the_display_seam()
     {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-human-{Guid.NewGuid():N}");
-        try
-        {
-            var store = new RunRecordStore(Path.Combine(directory, "records.json"));
-            await store.InitializeAsync(
-                TestSupport.Packet(),
-                TestContext.Current.CancellationToken
-            );
-            var terminal = new TerminalHumanInteraction(store);
-            var request = new ReviewerHumanRequest.RepairCap(
-                "Continue repairs?",
-                "The repair limit was reached."
-            );
-            var context = new PipelineInteractionContext<ReviewerHumanRequest, ReviewerHumanAnswer>(
-                Guid.CreateVersion7(),
-                "request-1",
-                "reviewer-human",
-                request
-            );
+        var terminal = new TerminalHumanInteraction();
+        var request = new ReviewerHumanRequest.RepairCap(
+            "Continue repairs?",
+            "The repair limit was reached."
+        );
+        var context = new PipelineInteractionContext<ReviewerHumanRequest, ReviewerHumanAnswer>(
+            Guid.CreateVersion7(),
+            "request-1",
+            "reviewer-human",
+            request
+        );
 
-            var waiting = terminal.WaitForReviewerAsync(
-                context,
-                TestContext.Current.CancellationToken
-            );
+        var waiting = terminal.WaitForReviewerAsync(context, TestContext.Current.CancellationToken);
 
-            terminal.HasPending().Should().BeTrue();
-            terminal
-                .FormatInteraction(
-                    new PipelineInteractionRequested<ReviewerHumanRequest>(
-                        context.RunId,
-                        context.InteractionId,
-                        context.RequestId,
-                        request
-                    )
+        terminal.HasPending().Should().BeTrue();
+        terminal
+            .FormatInteraction(
+                new PipelineInteractionRequested<ReviewerHumanRequest>(
+                    context.RunId,
+                    context.InteractionId,
+                    context.RequestId,
+                    request
                 )
-                .Should()
-                .Be(
-                    new TerminalInteractionPrompt(
-                        "Continue repairs?",
-                        "The repair limit was reached.\nAnswer continue or stop."
-                    )
-                );
+            )
+            .Should()
+            .Be(
+                new TerminalInteractionPrompt(
+                    "Continue repairs?",
+                    "The repair limit was reached.\nAnswer continue or stop."
+                )
+            );
 
-            await terminal.SubmitAsync("continue", TestContext.Current.CancellationToken);
+        await terminal.SubmitAsync("continue", TestContext.Current.CancellationToken);
 
-            (await waiting).Should().BeOfType<ReviewerHumanAnswer.ContinueRepairs>();
-            terminal.HasPending().Should().BeFalse();
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
+        (await waiting).Should().BeOfType<ReviewerHumanAnswer.ContinueRepairs>();
+        terminal.HasPending().Should().BeFalse();
     }
 
     [Fact]
@@ -338,54 +250,6 @@ public sealed class HostBoundaryTests
         finally
         {
             File.Delete(configPath);
-        }
-    }
-
-    [Fact]
-    public async Task Record_store_persists_the_latest_accepted_outcome_ledger_snapshot()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-ledger-{Guid.NewGuid():N}");
-        var path = Path.Combine(directory, "records.json");
-        try
-        {
-            var store = new RunRecordStore(path);
-            await store.InitializeAsync(
-                TestSupport.Packet(),
-                TestContext.Current.CancellationToken
-            );
-            await store.AcceptOutcomeLedgerAsync(
-                "update-1",
-                [
-                    new OutcomeLedgerEntry(
-                        "outcome-1",
-                        "Deliver the feature",
-                        OutcomeStatus.Complete,
-                        ["src/a.cs: implemented"],
-                        "Implemented.",
-                        null
-                    ),
-                ],
-                TestContext.Current.CancellationToken
-            );
-
-            var context = await store.ReadContextAsync(
-                CadenceLedgerRole.Reviewer,
-                TestContext.Current.CancellationToken
-            );
-
-            context.Outcomes!.AcceptedDecisionId.Should().Be("update-1");
-            context
-                .Outcomes.Outcomes.Should()
-                .ContainSingle()
-                .Which.Status.Should()
-                .Be(OutcomeStatus.Complete);
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
         }
     }
 
@@ -728,6 +592,134 @@ public sealed class HostBoundaryTests
         }
     }
 
+    [Fact]
+    public async Task Resume_target_accepts_a_packet_path_and_selects_the_latest_matching_run()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-resume-home-{Guid.NewGuid():N}");
+        var repository = TestSupport.CreateGitRepository();
+        var packetPath = Path.Combine(home, "packet.md");
+        Directory.CreateDirectory(home);
+        File.WriteAllText(packetPath, ValidPacket(repository, ""));
+        var packet = PacketReader.Read(packetPath);
+        var olderRunId = Guid.CreateVersion7();
+        await Task.Delay(2, TestContext.Current.CancellationToken);
+        var newerRunId = Guid.CreateVersion7();
+        try
+        {
+            foreach (var runId in new[] { olderRunId, newerRunId })
+            {
+                var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+                Directory.CreateDirectory(runDirectory);
+                var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+                var observer = await store.CreateObserverAsync(
+                    runId,
+                    "cadence",
+                    TestContext.Current.CancellationToken
+                );
+                await observer.ObserveAsync(
+                    new PipelineStepCompleted(
+                        runId,
+                        CadenceIds.Executor,
+                        new PipelineRunOutcome(
+                            OutcomeKinds.CheckpointWritten,
+                            CadenceIds.Executor,
+                            "Checkpoint written.",
+                            JsonSerializer.SerializeToElement(new { }),
+                            TimeSpan.Zero
+                        ),
+                        new PipelineAcceptedValue(
+                            typeof(CadenceState).FullName!,
+                            JsonSerializer.SerializeToElement(
+                                CadenceState.Create(
+                                    packet,
+                                    "base-sha",
+                                    Path.Combine(runDirectory, "workspace")
+                                ),
+                                TandemJson.CreateTypedContract()
+                            )
+                        )
+                    ),
+                    TestContext.Current.CancellationToken
+                );
+                await store.CompleteRunAsync(
+                    runId,
+                    LedgerRunStatus.Faulted,
+                    TestContext.Current.CancellationToken
+                );
+            }
+
+            var target = await Program.ResolveResumeTargetAsync(
+                packetPath,
+                home,
+                TestContext.Current.CancellationToken
+            );
+
+            target.RunId.Should().Be(newerRunId);
+            target.Packet.Should().BeEquivalentTo(packet);
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Resume_rejects_a_ledger_bound_to_another_workspace()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-resume-home-{Guid.NewGuid():N}");
+        var runId = Guid.CreateVersion7();
+        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+        var configPath = Path.Combine(home, "config.json");
+        Directory.CreateDirectory(runDirectory);
+        File.WriteAllText(Path.Combine(home, "reviewer.md"), "Review doctrine.\n");
+        File.WriteAllText(configPath, ConfigurationJson("reviewer.md"));
+        try
+        {
+            var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+            var observer = await store.CreateObserverAsync(
+                runId,
+                "cadence",
+                TestContext.Current.CancellationToken
+            );
+            var state = TestSupport.State(Path.Combine(home, "another-run", "workspace"));
+            await observer.ObserveAsync(
+                new PipelineStepCompleted(
+                    runId,
+                    CadenceIds.Executor,
+                    new PipelineRunOutcome(
+                        OutcomeKinds.CheckpointWritten,
+                        CadenceIds.Executor,
+                        "Checkpoint written.",
+                        JsonSerializer.SerializeToElement(new { }),
+                        TimeSpan.Zero
+                    ),
+                    new PipelineAcceptedValue(
+                        typeof(CadenceState).FullName!,
+                        JsonSerializer.SerializeToElement(state, TandemJson.CreateTypedContract())
+                    )
+                ),
+                TestContext.Current.CancellationToken
+            );
+
+            var exitCode = await Program.Main([
+                "resume",
+                runId.ToString("N"),
+                "--home",
+                home,
+                "--config",
+                configPath,
+            ]);
+
+            exitCode.Should().Be(1);
+            Directory.Exists(Path.Combine(runDirectory, "workspace")).Should().BeFalse();
+        }
+        finally
+        {
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
     private static string ValidPacket(string repository, string extra) =>
         $$"""
             ---
@@ -755,177 +747,6 @@ public sealed class HostBoundaryTests
             ?? throw new InvalidOperationException("Could not find the Cadence repository root.");
     }
 
-    [Fact]
-    public async Task Record_store_acceptance_ids_are_idempotent()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-records-{Guid.NewGuid():N}");
-        var path = Path.Combine(directory, "records.json");
-        try
-        {
-            var store = new RunRecordStore(path);
-            var checkpoint = new ProgressCheckpointRecord("Summary", [], [], [], "Next");
-            var verification = new VerificationResult(
-                0,
-                "test",
-                0,
-                "passed",
-                "",
-                TimeSpan.Zero,
-                false
-            );
-
-            await store.AcceptCheckpointAsync(
-                "checkpoint-1",
-                checkpoint,
-                TestContext.Current.CancellationToken
-            );
-            await store.AcceptCheckpointAsync(
-                "checkpoint-1",
-                checkpoint,
-                TestContext.Current.CancellationToken
-            );
-            await store.AcceptVerificationResultAsync(
-                "verification-1",
-                "candidate",
-                verification,
-                TestContext.Current.CancellationToken
-            );
-            await store.AcceptVerificationResultAsync(
-                "verification-1",
-                "candidate",
-                verification,
-                TestContext.Current.CancellationToken
-            );
-
-            using var document = JsonDocument.Parse(
-                await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)
-            );
-            document.RootElement.GetProperty("checkpoints").GetArrayLength().Should().Be(1);
-            document.RootElement.GetProperty("verificationResults").GetArrayLength().Should().Be(1);
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task Separate_execution_attempts_do_not_collide_on_capability_acceptance_ids()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-records-{Guid.NewGuid():N}");
-        var path = Path.Combine(directory, "records.json");
-        try
-        {
-            var first = new RunRecordStore(
-                path,
-                Guid.Parse("00000000-0000-0000-0000-000000000001")
-            );
-            var resumed = new RunRecordStore(
-                path,
-                Guid.Parse("00000000-0000-0000-0000-000000000002")
-            );
-            await first.AcceptCheckpointAsync(
-                "same-runtime-id",
-                new ProgressCheckpointRecord("First", [], [], [], "Next"),
-                TestContext.Current.CancellationToken
-            );
-            await resumed.AcceptCheckpointAsync(
-                "same-runtime-id",
-                new ProgressCheckpointRecord("Resumed", [], [], [], "Next"),
-                TestContext.Current.CancellationToken
-            );
-
-            using var document = JsonDocument.Parse(
-                await File.ReadAllTextAsync(path, TestContext.Current.CancellationToken)
-            );
-            document.RootElement.GetProperty("checkpoints").GetArrayLength().Should().Be(2);
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-    }
-
-    [Fact]
-    public async Task Record_store_records_typed_planner_decision_directly_without_reserialization()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"cadence-records-{Guid.NewGuid():N}");
-        var path = Path.Combine(directory, "records.json");
-        try
-        {
-            var store = new RunRecordStore(path);
-            var decision = new PlannerDecision(
-                PlannerDecisionValue.Proceed,
-                "go",
-                [],
-                ["README.md"],
-                "implement the outcome"
-            );
-
-            await store.ObserveAsync(
-                new OutputAccepted<PlannerDecision>(
-                    Guid.CreateVersion7(),
-                    CadenceIds.Planner,
-                    "planner-output-1",
-                    "agent.success",
-                    typeof(PlannerDecision).FullName,
-                    JsonSerializer.SerializeToElement(
-                        decision,
-                        new JsonSerializerOptions(JsonSerializerDefaults.Web)
-                        {
-                            Converters = { new JsonStringEnumConverter() },
-                        }
-                    ),
-                    decision
-                ),
-                TestContext.Current.CancellationToken
-            );
-
-            var context = await store.ReadContextAsync(
-                CadenceLedgerRole.Reviewer,
-                TestContext.Current.CancellationToken
-            );
-            var recorded = context.PlannerDecisions.Should().ContainSingle().Which;
-            recorded.Decision.Should().Be(PlannerDecisionValue.Proceed);
-            recorded.Rationale.Should().Be("go");
-            recorded.SafeNextAction.Should().Be("implement the outcome");
-
-            await store.ObserveAsync(
-                new OutputAccepted<PlannerDecision>(
-                    Guid.CreateVersion7(),
-                    "another-step",
-                    "other-output",
-                    "agent.success",
-                    typeof(PlannerDecision).FullName,
-                    JsonSerializer.SerializeToElement(decision),
-                    decision
-                ),
-                TestContext.Current.CancellationToken
-            );
-            (
-                await store.ReadContextAsync(
-                    CadenceLedgerRole.Reviewer,
-                    TestContext.Current.CancellationToken
-                )
-            )
-                .PlannerDecisions.Should()
-                .ContainSingle();
-        }
-        finally
-        {
-            if (Directory.Exists(directory))
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-        }
-    }
-
     private static string ConfigurationJson(
         string? doctrineFile,
         IReadOnlyList<string>? skillDirectories = null
@@ -934,7 +755,9 @@ public sealed class HostBoundaryTests
             {
               "reviewerDoctrineFile": {{JsonSerializer.Serialize(doctrineFile)}},
               "skillDirectories": {{JsonSerializer.Serialize(skillDirectories ?? [])}},
-              "providers": {},
+              "providers": {
+                "local": { "baseUrl": "http://127.0.0.1:1/v1", "apiKeyEnvironmentVariable": null }
+              },
               "profiles": {
                 "executor": { "provider": "local", "model": "model", "contextWindowTokens": 1, "maxOutputTokens": 1, "checkpointAtPercent": 80 },
                 "planner": { "provider": "local", "model": "model", "contextWindowTokens": 1, "maxOutputTokens": 1, "checkpointAtPercent": 80 },

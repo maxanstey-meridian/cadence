@@ -10,19 +10,12 @@ public sealed class CompositionTests
     [Fact]
     public void Graph_exposes_the_complete_single_run_lifecycle()
     {
-        var records = new FakeRecordSink();
         var git = new GitProcess();
         var checkpointPolicy = new DirtyWorkCheckpointPolicy(git, TimeProvider.System);
-        var capabilities = CadenceCapabilities.Create(
-            new CheckpointAcceptance(git, records),
-            records,
-            TimeProvider.System,
-            checkpointPolicy
-        );
+        var capabilities = CadenceCapabilities.Create(TimeProvider.System, checkpointPolicy);
         var factory = new CadenceParticipantsFactory(
             _ => new FakeChatClient(),
             _ => new CadenceAgentProfile(200_000, 32_000, 80),
-            records,
             TestSupport.Doctrine(),
             [],
             new WorkspacePreparation(git),
@@ -57,6 +50,12 @@ public sealed class CompositionTests
             .Contain(route =>
                 route.SourceId == CadenceIds.Executor && route.TargetId == CadenceIds.Planner
             );
+        inspection
+            .Routes.Count(route =>
+                route.SourceId == CadenceIds.Executor && route.TargetId == CadenceIds.Planner
+            )
+            .Should()
+            .Be(2, "both explicit questions and checkpoints route directly to Planner");
         inspection
             .Routes.Should()
             .Contain(route =>

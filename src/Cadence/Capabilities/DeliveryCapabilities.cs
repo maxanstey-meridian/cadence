@@ -1,12 +1,8 @@
-using Tandem.Advanced;
-
 namespace Cadence;
 
 internal static class CadenceCapabilities
 {
     internal static CadenceCapabilitySet Create(
-        CheckpointAcceptance checkpointAcceptance,
-        ICadenceRecordSink records,
         TimeProvider timeProvider,
         DirtyWorkCheckpointPolicy dirtyWorkCheckpoint
     )
@@ -23,37 +19,18 @@ internal static class CadenceCapabilities
             new SubmitReportCapability(dirtyWorkCheckpoint),
             (state, request) => state.RecordImplementationReport(request)
         );
-        var updateOutcomes = AgentCapabilities
-            .Create<CadenceState, UpdateOutcomesRequest>(
-                new UpdateOutcomesCapability(),
-                (state, request) => state.RecordOutcomeUpdates(request)
-            )
-            .WithAcceptance(
-                (context, cancellationToken) =>
-                    records.AcceptOutcomeLedgerAsync(
-                        context.AcceptedCallId,
-                        context.State.RecordOutcomeUpdates(context.Request).OutcomeLedger,
-                        cancellationToken
-                    )
-            );
-        var writeCheckpoint = AgentCapabilities
-            .Create<CadenceState, WriteCheckpointRequest>(
-                new WriteCheckpointCapability(),
-                (state, request) =>
-                {
-                    dirtyWorkCheckpoint.MarkContinuity(state.WorkspacePath);
-                    return state.RecordCheckpoint(request, timeProvider.GetUtcNow());
-                }
-            )
-            .WithAcceptance(
-                (context, cancellationToken) =>
-                    checkpointAcceptance.AcceptAsync(
-                        $"{context.AcceptedCallId}--checkpoint",
-                        context.State,
-                        context.Request,
-                        cancellationToken
-                    )
-            );
+        var updateOutcomes = AgentCapabilities.Create<CadenceState, UpdateOutcomesRequest>(
+            new UpdateOutcomesCapability(),
+            (state, request) => state.RecordOutcomeUpdates(request)
+        );
+        var writeCheckpoint = AgentCapabilities.Create<CadenceState, WriteCheckpointRequest>(
+            new WriteCheckpointCapability(),
+            (state, request) =>
+            {
+                dirtyWorkCheckpoint.MarkContinuity(state.WorkspacePath);
+                return state.RecordCheckpoint(request, timeProvider.GetUtcNow());
+            }
+        );
         return new CadenceCapabilitySet(askPlanner, updateOutcomes, submitReport, writeCheckpoint);
     }
 }

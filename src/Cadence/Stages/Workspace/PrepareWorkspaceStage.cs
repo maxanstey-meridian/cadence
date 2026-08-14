@@ -1,10 +1,7 @@
 namespace Cadence;
 
 [PipelineStage(CadenceIds.Prepare)]
-public sealed partial class PrepareWorkspaceStage(
-    WorkspacePreparation preparation,
-    ICadenceRecordSink records
-)
+public sealed partial class PrepareWorkspaceStage(WorkspacePreparation preparation)
 {
     public async ValueTask<Outcome<CadenceState>> ExecuteAsync(
         CadenceState state,
@@ -23,10 +20,6 @@ public sealed partial class PrepareWorkspaceStage(
                 cancellationToken
             )
             : await preparation.PrepareAsync(state.Packet, state.WorkspacePath, cancellationToken);
-        await records.AcceptWorkspaceAsync(
-            new WorkspacePreparationRecord(prepared.PinnedBaseSha),
-            cancellationToken
-        );
         return new Outcome<CadenceState>.Success(
             state with
             {

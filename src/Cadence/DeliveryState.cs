@@ -20,6 +20,7 @@ public sealed record CadenceState(
     ExecutorTransition? ExecutorTransition,
     ReviewDecision? ReviewerDecision,
     string? ReviewerCandidateSha,
+    string? AcceptedCandidateSha,
     int ReviewAttempt,
     int MaximumReviewAttempts,
     int PlannerFailureCount,
@@ -124,6 +125,7 @@ public sealed record CadenceState(
             ExecutorTransition: null,
             ReviewerDecision: null,
             ReviewerCandidateSha: null,
+            AcceptedCandidateSha: null,
             ReviewAttempt: 0,
             MaximumReviewAttempts: maximumReviewAttempts,
             PlannerFailureCount: 0,
@@ -134,83 +136,44 @@ public sealed record CadenceState(
         );
     }
 
-    public static CadenceState Recover(
-        Packet packet,
-        string pinnedBaseSha,
-        string workspacePath,
-        RecoveryRecord recovery,
-        TimeProvider? timeProvider = null,
-        int maximumReviewAttempts = 3
-    )
+    public CadenceState Resume(Packet packet)
     {
-        if (recovery.PublicationCandidate is not null || recovery.VerificationResults.Count > 0)
+        if (CandidateSha is not null || VerificationResults.Count > 0)
         {
             throw new InvalidOperationException(
                 "Resume currently supports executor-phase runs before candidate verification."
             );
         }
-        var state = Create(
-            packet,
-            pinnedBaseSha,
-            workspacePath,
-            timeProvider,
-            maximumReviewAttempts
-        );
-        var persistedOutcomes = recovery.Outcomes?.Outcomes;
-        var outcomes =
-            persistedOutcomes is not null
-            && persistedOutcomes
-                .Select(outcome => (outcome.Id, outcome.Description))
-                .SequenceEqual(packet.Outcomes.Select(outcome => (outcome.Id, outcome.Description)))
-                ? persistedOutcomes
-                    .Select(outcome => new OutcomeLedgerEntry(
-                        outcome.Id,
-                        outcome.Description,
-                        outcome.Status,
-                        outcome.Evidence,
-                        outcome.ImplementationState,
-                        outcome.NextAction
-                    ))
-                    .ToArray()
-                : state.OutcomeLedger;
-        var checkpoint = recovery.LatestCheckpoint;
+        var outcomes = OutcomeLedger
+            .Select(outcome => (outcome.OutcomeId, outcome.Description))
+            .SequenceEqual(packet.Outcomes.Select(outcome => (outcome.Id, outcome.Description)))
+            ? OutcomeLedger
+            : Create(packet, PinnedBaseSha, WorkspacePath).OutcomeLedger;
         var evidence = new List<string>
         {
-            $"Existing workspace retained at {workspacePath}.",
-            $"Pinned base is {pinnedBaseSha}.",
+            $"Existing workspace retained at {WorkspacePath}.",
+            $"Pinned base is {PinnedBaseSha}.",
         };
-        if (checkpoint is not null)
+        if (LatestCheckpoint is { } checkpoint)
         {
             evidence.Add($"Latest accepted checkpoint: {checkpoint.Summary}");
-            evidence.Add($"Checkpoint changed files: {string.Join(", ", checkpoint.ChangedFiles)}");
-            evidence.Add(
-                $"Checkpoint accepted constraints: {string.Join("; ", checkpoint.AcceptedConstraints)}"
-            );
             evidence.Add(
                 $"Checkpoint uncertainties: {string.Join("; ", checkpoint.Uncertainties)}"
             );
             evidence.Add($"Checkpoint next action: {checkpoint.NextAction}");
         }
 
-        return state with
+        return this with
         {
-            PlannerDecision = recovery.LatestPlannerDecision,
-            PlannerConstraints = recovery.ActivePlannerConstraints,
-            PlannerFailureCount = recovery.PlannerFailureCount,
+            Packet = packet,
             OutcomeLedger = outcomes,
-            LatestCheckpoint = checkpoint is null
-                ? null
-                : new WriteCheckpointRequest(
-                    checkpoint.Summary,
-                    checkpoint.Uncertainties,
-                    checkpoint.NextAction
-                ),
+            ApprovedApproachRevision = null,
             ExecutorTransition = new ExecutorTransition.PlannerRequested(
                 new AskPlannerRequest(
                     PlannerQuestionType.SessionReliability,
                     "Resume interrupted executor work",
                     "The prior Cadence process ended unexpectedly. Re-establish a safe approach from the retained workspace and durable records.",
-                    checkpoint?.NextAction
+                    LatestCheckpoint?.NextAction
                         ?? "Inspect the retained workspace and outcome ledger, then propose the smallest safe continuation.",
                     evidence
                 )
@@ -236,6 +199,7 @@ public sealed record CadenceState(
             PlannerConstraints = decision.Decision
                 is PlannerDecisionValue.Proceed
                     or PlannerDecisionValue.ProceedWithConstraints
+                    or PlannerDecisionValue.Reorient
                 ? decision.Constraints
                 : PlannerConstraints,
             ApprovedApproachRevision = authorizesMutation ? ApproachRevision : null,
@@ -334,6 +298,7 @@ public sealed record CadenceState(
             VerifiedCandidateSha = null,
             ReviewerDecision = null,
             ReviewerCandidateSha = null,
+            AcceptedCandidateSha = null,
             ExecutorTransition = new ExecutorTransition.OutcomeLedgerUpdated(request),
             ReviewRepairRequired = false,
         };
@@ -348,6 +313,7 @@ public sealed record CadenceState(
             VerifiedCandidateSha = null,
             ReviewerDecision = null,
             ReviewerCandidateSha = null,
+            AcceptedCandidateSha = null,
             ExecutorTransition = new ExecutorTransition.ReportSubmitted(request),
         };
 

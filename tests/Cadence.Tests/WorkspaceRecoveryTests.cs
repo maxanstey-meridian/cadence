@@ -10,22 +10,13 @@ public sealed class WorkspaceRecoveryTests
     {
         var repository = TestSupport.CreateGitRepository();
         var workspace = Path.Combine(Path.GetTempPath(), $"cadence-missing-{Guid.NewGuid():N}");
-        var records = new FakeRecordSink();
-        var state = CadenceState.Recover(
-            TestSupport.Packet() with
-            {
-                Repository = repository,
-            },
-            TestSupport.Head(repository),
-            workspace,
-            new RecoveryRecord(null, null, null, null, null, [], 0, [], null)
-        );
+        var packet = TestSupport.Packet() with { Repository = repository };
+        var state = CadenceState
+            .Create(packet, TestSupport.Head(repository), workspace)
+            .Resume(packet);
         try
         {
-            var stage = new PrepareWorkspaceStage(
-                new WorkspacePreparation(new GitProcess()),
-                records
-            );
+            var stage = new PrepareWorkspaceStage(new WorkspacePreparation(new GitProcess()));
 
             var act = async () =>
                 await stage.ExecuteAsync(state, TestContext.Current.CancellationToken);
@@ -34,7 +25,6 @@ public sealed class WorkspaceRecoveryTests
                 .ThrowAsync<WorkspacePreparationException>()
                 .WithMessage("*not found*");
             Directory.Exists(workspace).Should().BeFalse();
-            records.Workspace.Should().BeNull();
         }
         finally
         {

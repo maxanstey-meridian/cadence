@@ -8,30 +8,10 @@ public sealed class PublicationTests
     [Fact]
     public async Task Explicit_publication_branch_must_remain_isolated()
     {
-        var records = new FakeRecordSink();
-        await records.AcceptPublicationCandidateAsync(
-            "accepted",
-            new PublicationCandidateDocument(
-                "accepted",
-                "/repository",
-                "/workspace",
-                "Feature",
-                "base",
-                "1234567890abcdef",
-                TestSupport.Doctrine().Source,
-                TestSupport.Doctrine().Sha256,
-                [Assessment()],
-                [Verification()],
-                Decision()
-            ),
-            TestContext.Current.CancellationToken
-        );
+        var state = AcceptedState("/repository", "/workspace", "base", "1234567890abcdef");
 
         var act = async () =>
-            await new PublicationOperation(new GitProcess(), records).ExecuteAsync(
-                "main",
-                TestContext.Current.CancellationToken
-            );
+            await Operation().ExecuteAsync(state, "main", TestContext.Current.CancellationToken);
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*cadence/*");
     }
@@ -46,41 +26,60 @@ public sealed class PublicationTests
             File.AppendAllText(Path.Combine(workspace, "README.md"), "different head\n");
             TestSupport.Git(workspace, "add", "README.md");
             TestSupport.Git(workspace, "commit", "-m", "different");
-            var records = new FakeRecordSink();
-            await records.AcceptPublicationCandidateAsync(
-                "accepted",
-                new PublicationCandidateDocument(
-                    "accepted",
-                    repository,
-                    workspace,
-                    "Feature",
-                    TestSupport.Head(repository),
-                    TestSupport.Head(repository),
-                    TestSupport.Doctrine().Source,
-                    TestSupport.Doctrine().Sha256,
-                    [Assessment()],
-                    [Verification()],
-                    Decision()
-                ),
-                TestContext.Current.CancellationToken
+            var state = AcceptedState(
+                repository,
+                workspace,
+                TestSupport.Head(repository),
+                TestSupport.Head(repository)
             );
 
             var act = async () =>
-                await new PublicationOperation(new GitProcess(), records).ExecuteAsync(
-                    "cadence/feature",
-                    TestContext.Current.CancellationToken
-                );
+                await Operation()
+                    .ExecuteAsync(state, "cadence/feature", TestContext.Current.CancellationToken);
 
             await act.Should()
                 .ThrowAsync<InvalidOperationException>()
                 .WithMessage("*does not equal candidate*");
-            records.PublicationResults.Should().BeEmpty();
         }
         finally
         {
             Directory.Delete(repository, recursive: true);
             Directory.Delete(workspace, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Publication_refuses_candidate_not_accepted_by_acceptance_stage()
+    {
+        var state = AcceptedState("/repository", "/workspace", "base", "1234567890abcdef") with
+        {
+            AcceptedCandidateSha = null,
+        };
+
+        var act = async () =>
+            await Operation()
+                .ExecuteAsync(state, "cadence/feature", TestContext.Current.CancellationToken);
+
+        await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*no accepted publication candidate*");
+    }
+
+    [Fact]
+    public async Task Publication_refuses_candidate_reviewed_under_another_doctrine()
+    {
+        var state = AcceptedState("/repository", "/workspace", "base", "1234567890abcdef");
+
+        var act = async () =>
+            await new PublicationOperation(new GitProcess(), "different-doctrine").ExecuteAsync(
+                state,
+                "cadence/feature",
+                TestContext.Current.CancellationToken
+            );
+
+        await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("*doctrine does not match*");
     }
 
     [Fact]
@@ -98,31 +97,16 @@ public sealed class PublicationTests
             TestSupport.Git(workspace, "add", "README.md");
             TestSupport.Git(workspace, "commit", "-m", "candidate");
             var candidateSha = TestSupport.Head(workspace);
-            var records = new FakeRecordSink();
-            await records.AcceptPublicationCandidateAsync(
-                "accepted",
-                new PublicationCandidateDocument(
-                    "accepted",
-                    repository,
-                    workspace,
-                    "Feature",
-                    sourceHead,
-                    candidateSha,
-                    TestSupport.Doctrine().Source,
-                    TestSupport.Doctrine().Sha256,
-                    [Assessment()],
-                    [Verification()],
-                    Decision()
-                ),
-                TestContext.Current.CancellationToken
-            );
-            var operation = new PublicationOperation(new GitProcess(), records);
+            var state = AcceptedState(repository, workspace, sourceHead, candidateSha);
+            var operation = Operation();
 
             var first = await operation.ExecuteAsync(
+                state,
                 "cadence/feature",
                 TestContext.Current.CancellationToken
             );
             var second = await operation.ExecuteAsync(
+                state,
                 "cadence/feature",
                 TestContext.Current.CancellationToken
             );
@@ -131,10 +115,7 @@ public sealed class PublicationTests
             first.CandidateSha.Should().Be(candidateSha);
             TestSupport.Git(repository, "rev-parse", "--verify", "refs/heads/cadence/feature");
             TestSupport.Head(repository).Should().Be(sourceHead);
-            records
-                .PublicationResults.Should()
-                .HaveCount(2)
-                .And.OnlyContain(result => result.Reconciled);
+            first.Reconciled.Should().BeTrue();
         }
         finally
         {
@@ -149,6 +130,9 @@ public sealed class PublicationTests
     private static ReviewOutcomeAssessment Assessment() =>
         new("outcome-1", true, [TestSupport.FileEvidence()]);
 
+    private static PublicationOperation Operation() =>
+        new(new GitProcess(), TestSupport.Doctrine().Sha256);
+
     private static VerificationResult Verification() =>
         new(0, "test", 0, "passed", "", TimeSpan.Zero, false);
 
@@ -161,4 +145,24 @@ public sealed class PublicationTests
             [],
             []
         );
+
+    private static CadenceState AcceptedState(
+        string repository,
+        string workspace,
+        string baseSha,
+        string candidateSha
+    ) =>
+        TestSupport.State(repository) with
+        {
+            Packet = TestSupport.Packet() with { Repository = repository, Title = "Feature" },
+            WorkspacePath = workspace,
+            PinnedBaseSha = baseSha,
+            CandidateSha = candidateSha,
+            VerifiedCandidateSha = candidateSha,
+            VerificationIndex = 1,
+            VerificationResults = [Verification()],
+            ReviewerCandidateSha = candidateSha,
+            ReviewerDecision = Decision(),
+            AcceptedCandidateSha = candidateSha,
+        };
 }

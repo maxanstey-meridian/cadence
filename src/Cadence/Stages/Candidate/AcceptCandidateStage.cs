@@ -3,11 +3,7 @@ using Cadence.Git;
 namespace Cadence;
 
 [PipelineStage(CadenceIds.AcceptCandidate)]
-public sealed partial class AcceptCandidateStage(
-    ICadenceRecordSink records,
-    ReviewerDoctrine reviewerDoctrine,
-    GitProcess git
-)
+public sealed partial class AcceptCandidateStage(ReviewerDoctrine reviewerDoctrine, GitProcess git)
 {
     public async ValueTask<Outcome<CadenceState>> ExecuteAsync(
         CadenceState state,
@@ -66,24 +62,11 @@ public sealed partial class AcceptCandidateStage(
             );
         }
 
-        var acceptedCandidateId = $"accepted-candidate--{candidateSha}";
-        await records.AcceptPublicationCandidateAsync(
-            acceptedCandidateId,
-            new PublicationCandidateDocument(
-                acceptedCandidateId,
-                state.Packet.Repository,
-                state.WorkspacePath,
-                state.Packet.Title,
-                state.PinnedBaseSha,
-                candidateSha,
-                reviewerDoctrine.Source,
-                reviewerDoctrine.Sha256,
-                state.ReviewerDecision.Outcomes,
-                state.VerificationResults,
-                state.ReviewerDecision
-            ),
-            cancellationToken
+        return new Outcome<CadenceState>.Success(
+            state with
+            {
+                AcceptedCandidateSha = candidateSha,
+            }
         );
-        return new Outcome<CadenceState>.Success(state);
     }
 }

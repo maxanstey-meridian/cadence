@@ -7,7 +7,6 @@ namespace Cadence;
 
 public sealed class VerificationOperation(
     GitProcess git,
-    ICadenceRecordSink records,
     TimeSpan? commandTimeout = null,
     int maximumOutputBytesPerStream = 16 * 1024 * 1024
 )
@@ -60,16 +59,6 @@ public sealed class VerificationOperation(
             result.ExitCode,
             cancellationToken
         );
-        await records.AcceptVerificationResultAsync(
-            $"{context.RunId:N}--{CadenceIds.Verify}--{ctx.VerificationResults.Count + 1}",
-            ctx.CandidateSha
-                ?? throw new InvalidOperationException(
-                    "Verification requires a captured candidate."
-                ),
-            result,
-            cancellationToken
-        );
-
         var results = ctx.VerificationResults.Append(result).ToList();
         var passed = result.ExitCode == 0;
         var newIndex = passed ? ctx.VerificationIndex + 1 : ctx.VerificationIndex;
