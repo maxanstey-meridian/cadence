@@ -182,9 +182,9 @@ internal static class Program
             : resolved.Packet ?? accepted.Value.Packet;
         var state = accepted.Value.Resume(packet);
         var run = await store.GetRunAsync(runId, cancellationToken);
-        if (run.Status == LedgerRunStatus.Faulted)
+        if (run.Status is LedgerRunStatus.Faulted or LedgerRunStatus.Interrupted)
         {
-            await store.ReopenFaultedRunAsync(runId, cancellationToken);
+            await store.ReopenRunAsync(runId, cancellationToken);
         }
 
         return await ExecuteAsync(
@@ -234,7 +234,14 @@ internal static class Program
 
             var store = new SqliteLedgerStore(ledgerPath);
             var run = await store.GetRunAsync(runId, cancellationToken);
-            if (run.Status is not (LedgerRunStatus.Running or LedgerRunStatus.Faulted))
+            if (
+                run.Status
+                is not (
+                    LedgerRunStatus.Running
+                    or LedgerRunStatus.Faulted
+                    or LedgerRunStatus.Interrupted
+                )
+            )
             {
                 continue;
             }
@@ -316,13 +323,7 @@ internal static class Program
                 TerminalizingAsync = async (completion, _) =>
                     await store.CompleteRunAsync(
                         runId,
-                        completion.Status switch
-                        {
-                            TerminalPipelineStatus.Succeeded => LedgerRunStatus.Ready,
-                            TerminalPipelineStatus.Failed => LedgerRunStatus.Failed,
-                            TerminalPipelineStatus.Cancelled => LedgerRunStatus.Cancelled,
-                            _ => LedgerRunStatus.Faulted,
-                        },
+                        MapTerminalStatus(completion.Status),
                         CancellationToken.None
                     ),
             },
@@ -351,6 +352,15 @@ internal static class Program
         }
         return 0;
     }
+
+    internal static LedgerRunStatus MapTerminalStatus(TerminalPipelineStatus status) =>
+        status switch
+        {
+            TerminalPipelineStatus.Succeeded => LedgerRunStatus.Ready,
+            TerminalPipelineStatus.Failed => LedgerRunStatus.Failed,
+            TerminalPipelineStatus.Cancelled => LedgerRunStatus.Interrupted,
+            _ => LedgerRunStatus.Faulted,
+        };
 
     private static ExecutionConfiguration LoadExecutionConfiguration(
         string home,

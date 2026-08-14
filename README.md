@@ -239,7 +239,7 @@ Then run Cadence from any directory:
 cadence run packet.md
 ```
 
-Executor-phase runs left `Running` or `Faulted` can resume from their retained workspace and
+Executor-phase runs left `Running`, `Interrupted`, or `Faulted` can resume from their retained workspace and
 accepted state in `~/.cadence/runs/<run-id>/ledger.sqlite3`, with fresh agent sessions. Pass
 either the run ID or its original packet path; packet lookup selects the newest matching
 resumable run. Ready, failed, and cancelled runs remain terminal:

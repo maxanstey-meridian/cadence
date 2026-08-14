@@ -593,6 +593,15 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
+    public void Terminal_cancellation_is_recorded_as_resumable_interruption()
+    {
+        Program
+            .MapTerminalStatus(TerminalPipelineStatus.Cancelled)
+            .Should()
+            .Be(LedgerRunStatus.Interrupted);
+    }
+
+    [Fact]
     public async Task Resume_target_accepts_a_packet_path_and_selects_the_latest_matching_run()
     {
         var home = Path.Combine(Path.GetTempPath(), $"cadence-resume-home-{Guid.NewGuid():N}");
