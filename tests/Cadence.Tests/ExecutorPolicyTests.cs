@@ -24,5 +24,9 @@ public sealed class ExecutorPolicyTests
         directive.Should().NotBeNull();
         directive!.RequiredToolName.Should().BeNull();
         directive.Prompt.Should().ContainAll("ask_planner", "write_checkpoint", "submit_report");
+        directive.Prompt.Should().Contain("implementation autonomously");
+        directive
+            .Prompt.Should()
+            .Contain("never for ordinary implementation or deterministic gate repair");
     }
 }

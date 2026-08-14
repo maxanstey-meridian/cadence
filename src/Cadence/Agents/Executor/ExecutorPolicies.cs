@@ -36,10 +36,13 @@ public static class ExecutorPolicies
                         : new AgentTurnDirective(
                             """
                             Your previous response was not a lifecycle route. Continue the
-                             implementation, call update_outcomes as progress changes, call
-                             ask_planner when direction is needed, write_checkpoint when preserving continuity, or submit_report only
-                            when every packet outcome is ready for verification. Do not treat
-                            prose as completion; the next response must use one lifecycle tool.
+                             implementation autonomously, call update_outcomes as progress changes,
+                             write_checkpoint when preserving continuity, or submit_report only
+                             when every packet outcome is ready for verification. Do not treat
+                             prose as completion; the next response must use one lifecycle tool.
+                             Use ask_planner only for a runtime-required consultation, consequential
+                             unresolved direction, or genuine blockage after bounded investigation;
+                             never for ordinary implementation or deterministic gate repair.
                             """
                         )
                 )

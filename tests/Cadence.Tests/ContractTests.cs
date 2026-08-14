@@ -11,6 +11,19 @@ public sealed class ContractTests
         ExecutorPrompts.Instructions.Should().Contain("announce that you are ready and then");
         ExecutorPrompts.Instructions.Should().Contain("next authorized edit");
         ExecutorPrompts.Instructions.Should().Contain("begin mutation");
+        ExecutorPrompts
+            .Instructions.Should()
+            .Contain("You own implementation and ordinary engineering judgment");
+        ExecutorPrompts.Instructions.Should().Contain("not a reason by itself");
+        ExecutorPrompts.Instructions.Should().Contain("to call ask_planner");
+        ExecutorPrompts.Instructions.Should().Contain("remove a confirmed unused");
+        ExecutorPrompts.Instructions.Should().Contain("Do not use ask_planner for reassurance");
+        ExecutorPrompts.Instructions.Should().Contain("Ambiguity must be consequential");
+        ExecutorPrompts.Instructions.Should().Contain("One failed attempt");
+        ExecutorPrompts.Instructions.Should().Contain("is not by itself a Planner boundary");
+        new AskPlannerCapability()
+            .Instructions.Should()
+            .Contain("Do not use for ordinary implementation decisions");
     }
 
     [Fact]

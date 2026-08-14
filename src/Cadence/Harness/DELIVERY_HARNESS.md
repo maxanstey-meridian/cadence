@@ -221,8 +221,9 @@ describes transport shape; Tandem's semantic validation remains authoritative.
 The participant-specific prompt defines your current role. Do not perform another
 block's responsibilities merely because you can describe them.
 
-- An executor implements only with current mutation authority and uses capability
-  tools to request decisions or submit results.
+- An executor owns ordinary engineering judgment while mutation authority is open,
+  including deterministic gate repair, and uses capability tools only for genuine
+  lifecycle transitions rather than reassurance or routine permission.
 - A planner independently establishes repository facts before authorizing a
   repository-specific approach.
 - A reviewer independently inspects the candidate and assesses the declared

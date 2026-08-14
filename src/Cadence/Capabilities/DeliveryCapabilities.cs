@@ -62,7 +62,8 @@ internal sealed class AskPlannerCapability
     : IAgentCapabilityDefinition<CadenceState, AskPlannerRequest>
 {
     public string ToolName => "ask_planner";
-    public string Instructions => "Ask the planner agent for guidance and end the current turn.";
+    public string Instructions =>
+        "Escalate consequential unresolved engineering direction or genuine blockage and end the current turn. Do not use for ordinary implementation decisions, deterministic gate repair, or reassurance.";
     public FluentValidation.IValidator<AskPlannerRequest> Validator { get; } =
         new AskPlannerRequestValidator();
 
