@@ -512,6 +512,112 @@ public sealed class ContractTests
     }
 
     [Fact]
+    public void Executor_message_elevates_the_bounded_planner_slice_above_the_delivery_roadmap()
+    {
+        var state = TestSupport.State() with
+        {
+            ApproachRevision = 1,
+            ApprovedApproachRevision = 1,
+            PlannerDecision = new PlannerDecision(
+                PlannerDecisionValue.Proceed,
+                "The inspected seam supports this slice.",
+                [],
+                ["src/adapter.cs"],
+                "Implement only the focused adapter test slice.",
+                null,
+                null,
+                null
+            ),
+        };
+
+        var message = ExecutorPrompts.BuildMessage(state);
+
+        message.Should().Contain("Current working slice:");
+        message.Should().Contain("Implement only the focused adapter test slice.");
+        message.Should().Contain("Only this slice is active");
+        message.Should().Contain("Delivery roadmap (authoritative outcome ledger):");
+        message
+            .IndexOf("Current working slice:", StringComparison.Ordinal)
+            .Should()
+            .BeLessThan(
+                message.IndexOf(
+                    "Delivery roadmap (authoritative outcome ledger):",
+                    StringComparison.Ordinal
+                )
+            );
+    }
+
+    [Fact]
+    public void Planner_and_checkpoint_prompts_schedule_only_one_bounded_slice()
+    {
+        var plannerMessage = PlannerPrompts.BuildMessage(TestSupport.State());
+
+        plannerMessage.Should().Contain("Select one bounded working slice");
+        plannerMessage.Should().Contain("SafeNextAction is the authoritative active slice");
+        PlannerPrompts
+            .Instructions.Should()
+            .Contain("Large packets are expected to span many periodic Executor sessions");
+        PlannerPrompts.Instructions.Should().Contain("not a task list for later phases");
+        PlannerPrompts.Instructions.Should().Contain("not summarize the remaining delivery");
+        ExecutorPrompts
+            .CheckpointInstructions.Should()
+            .Contain("one precise immediate next action");
+        ExecutorPrompts
+            .CheckpointInstructions.Should()
+            .Contain("reconcile, inventory, or enumerate future phases");
+        new PlannerDecisionOutput()
+            .Instructions.Should()
+            .Contain("one bounded SafeNextAction for the next Executor session");
+    }
+
+    [Fact]
+    public void Executor_repair_routes_override_the_prior_planner_slice()
+    {
+        var planner = new PlannerDecision(
+            PlannerDecisionValue.Proceed,
+            "The original slice was safe.",
+            [],
+            ["src/adapter.cs"],
+            "Continue the original adapter slice.",
+            null,
+            null,
+            null
+        );
+        var verification = TestSupport.State() with
+        {
+            ApproachRevision = 1,
+            ApprovedApproachRevision = 1,
+            PlannerDecision = planner,
+            VerificationResults =
+            [
+                new VerificationResult(0, "task check", 1, "", "failed", TimeSpan.Zero, false),
+            ],
+        };
+        var review = verification with
+        {
+            VerificationResults = [],
+            ReviewRepairRequired = true,
+            ReviewerDecision = new ReviewDecision(
+                ReviewDecisionValue.RequestChanges,
+                TestSupport.Doctrine().Sha256,
+                "Repair required.",
+                [],
+                [new ReviewFinding(ReviewFindingSeverity.High, "Restore the invariant.", [])],
+                []
+            ),
+        };
+
+        ExecutorPrompts
+            .BuildMessage(verification)
+            .Should()
+            .Contain("Diagnose and repair the latest failed verification command: task check");
+        ExecutorPrompts
+            .BuildMessage(review)
+            .Should()
+            .Contain("starting with: Restore the invariant.");
+    }
+
+    [Fact]
     public void Reviewer_renders_regression_test_evidence()
     {
         var report = new SubmitReportRequest(

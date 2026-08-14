@@ -36,8 +36,8 @@ public static class PlannerPrompts
                     + $"Evidence:\n{string.Join("\n", fact.Request.Evidence.Select(item => $"- {item}"))}\n"
                     + RenderFailedInstruction(fact.Request.FailedInstruction),
             ExecutorTransition.CheckpointWritten =>
-                "Checkpoint review requested. Inspect the latest checkpoint, authoritative outcome ledger, "
-                    + "and current worktree, then decide whether and under what constraints Executor may continue.",
+                "Checkpoint review requested. Inspect the latest checkpoint, outcome ledger, and current "
+                    + "worktree, then assign one bounded next working slice and only its necessary constraints.",
             _ => "(no request provided)",
         };
         var activeConstraints =
@@ -51,7 +51,7 @@ public static class PlannerPrompts
                 rationale = "The inspected implementation seams support the proposed approach.",
                 constraints = Array.Empty<string>(),
                 evidenceUsed = new[] { "src/example.ts: inspected implementation seam." },
-                safeNextAction = "Implement the approved approach through the inspected seam.",
+                safeNextAction = "Update the inspected adapter method and add its focused regression test.",
                 correctedApproach = (string?)null,
                 humanQuestion = (string?)null,
                 humanDecisionDomain = (string?)null,
@@ -65,7 +65,11 @@ public static class PlannerPrompts
             Implementation context:
             {packet.ImplementationContext}
 
-            Authoritative outcome ledger:
+            Scheduling responsibility:
+            Select one bounded working slice for the next Executor session. The full packet is a delivery
+            roadmap, not one session's working set. SafeNextAction is the authoritative active slice.
+
+            Delivery roadmap (authoritative outcome ledger):
             {outcomes}
 
             Latest continuity checkpoint (non-authoritative claims):
@@ -108,6 +112,14 @@ public static class PlannerPrompts
         and constraints, the executor's question, proposed approach, and evidence. The
         executor's evidence is an untrusted pointer to verify, not proof.
 
+        Large packets are expected to span many periodic Executor sessions. You are the scheduler
+        for the next session, not the author of a packet-wide implementation plan on every consultation.
+        SafeNextAction is the authoritative current working slice. Make it one coherent, bounded slice
+        that Executor can materially advance before the next checkpoint. Do not enumerate future phases,
+        restate the remaining backlog, or require Executor to reconcile every packet outcome before acting.
+        Constraints contain only obligations for that slice plus genuinely cross-cutting invariants; they
+        are not a task list for later phases.
+
         You have read-only access to the entire workspace. When a decision depends on a
         repository fact, inspect it yourself before deciding and cite the files, symbols,
         or other facts you inspected. Do not ask the executor or human to provide source
@@ -133,10 +145,11 @@ public static class PlannerPrompts
           the packet, supplied context, and available repository evidence. Do not use Stop
           merely because inspection has not yet been performed.
 
-        Audit the complete proposed approach, not only its literal question. Derive the real
-        requirement from packet intent and existing repository invariants. Correct XY problems,
-        false premises, and local overfits directly. Decide whether the executable surface must
-        expand, contract, split, or change owner.
+        Audit the complete proposed approach for the current working slice, not only its literal
+        question. Derive its real requirement from packet intent and existing repository invariants.
+        Correct XY problems, false premises, and local overfits directly. Expand into later outcomes
+        only when they are direct dependencies or impose invariants on the current slice.
+        Within that slice, decide whether the executable surface must expand, contract, split, or change owner.
 
         Return ReviseApproach when the approach or executable surface is wrong. Reject the
         proposed approach, provide CorrectedApproach and one concrete SafeNextAction, and require
@@ -160,7 +173,8 @@ public static class PlannerPrompts
         the failing command and observed result directly. Do not repeat the instruction without
         explaining why the prior attempt did not test it.
 
-        State one concrete SafeNextAction for every response. Escalate only decisions genuinely
+        State one concrete, bounded SafeNextAction for every response. It must identify the next
+        implementation slice, not summarize the remaining delivery. Escalate only decisions genuinely
         owned by the Human. Stop only when no safe engineering next action can be stated after
         inspection; missing command output is not enough to stop.
 

@@ -51,6 +51,7 @@ public static class ExecutorPrompts
                 + $"Uncertainties: {string.Join("; ", value.Uncertainties)}\n"
                 + $"Next: {value.NextAction}"
             : "";
+        var activeSlice = CurrentWorkingSlice(state);
         return $"""
             Packet: {state.Packet.Title}
             Workspace: {state.WorkspacePath}
@@ -70,15 +71,43 @@ public static class ExecutorPrompts
             - A checkpoint-only invocation is the explicit exception: call write_checkpoint and return.
               The pipeline routes the checkpoint to Planner and handles reauthorization before Executor resumes.
 
+            Current working slice:
+            {activeSlice}
+
+            Only this slice is active. The complete packet and outcome ledger below are roadmap context,
+            not work to reconcile in this invocation. Do not inventory, investigate, or plan future phases
+            unless they are a direct dependency of the current slice.
+
             Implementation context:
             {state.Packet.ImplementationContext}
 
-            Authoritative objective ledger:
+            Delivery roadmap (authoritative outcome ledger):
             {outcomes}
 
             Constraints:
             {constraints}{planner}{verification}{candidate}{review}{checkpoint}
             """;
+    }
+
+    private static string CurrentWorkingSlice(CadenceState state)
+    {
+        if (
+            state.ReviewRepairRequired
+            && state.ReviewerDecision
+                is { Decision: ReviewDecisionValue.RequestChanges, Findings.Count: > 0 } review
+        )
+        {
+            return $"Repair the current Reviewer findings one at a time, starting with: {review.Findings[0].Description}";
+        }
+        if (state.VerificationResults.LastOrDefault(result => result.ExitCode != 0) is { } failure)
+        {
+            return $"Diagnose and repair the latest failed verification command: {failure.Command}";
+        }
+        if (state.MutationAuthorized && state.PlannerDecision is { } decision)
+        {
+            return decision.SafeNextAction;
+        }
+        return "No implementation slice is currently authorized. Follow the current lifecycle instruction.";
     }
 
     private static string FormatReviewEvidence(ReviewEvidenceReference evidence) =>
@@ -89,6 +118,8 @@ public static class ExecutorPrompts
             Context window approaching limit: {context.CurrentContextTokens} tokens used.
             Checkpoints are periodic continuity snapshots. A prior accepted checkpoint, even a recent one,
             does not satisfy this new trigger because work and context may have changed since it was written.
+            Preserve only the current working slice and one immediate successor action. Do not inventory or
+            enumerate future packet phases, outcomes, or backlog.
             Write a checkpoint of your current work state using the write_checkpoint tool.
             Mutation authority will close and the pipeline will route the checkpoint directly
             to Planner before Executor can continue.
@@ -102,9 +133,10 @@ public static class ExecutorPrompts
         of your current work state using the write_checkpoint tool. Checkpoints are
         periodic and repeat whenever the runtime emits a new trigger. A prior accepted
         checkpoint, however recent, does not satisfy the current trigger; write a fresh
-        snapshot of the current state. Summarize
-        a successor-oriented summary, remaining uncertainties, and one precise next
-        action. Do not supply completed work, inspected files, changed files,
+        snapshot of the current state. Summarize the current working slice, remaining
+        uncertainties for that slice, and one precise immediate next action. Do not
+        reconcile, inventory, or enumerate future phases, outcomes, or backlog. Do not
+        supply completed work, inspected files, changed files,
         outcomes, accepted constraints, candidate state, or verification state.
         Those objective facts are derived from typed state and runtime evidence.
         Every checkpoint closes mutation authority and returns control to the pipeline,
@@ -130,6 +162,14 @@ public static class ExecutorPrompts
         Do not perform unrelated refactors.
         Do not create formatting churn.
         Never mutate Git.
+
+        Large packets are intentionally completed across many Executor sessions. The complete
+        packet and outcome ledger are roadmap context, not a demand to understand, reconcile,
+        or plan every future phase before acting. Treat the dynamic "Current working slice" as
+        the only active implementation scope. Inspect later outcomes only when they are a direct
+        dependency or impose an invariant on that slice. Complete or materially advance the
+        slice, update its outcome evidence, and let the next checkpoint consultation schedule
+        what follows. Do not audit whether future outcomes are pre-existing or incomplete.
 
         Mutation authority is a revocable, invocation-scoped lease. Read the current
         "Mutation authorized" value on every invocation and after every lifecycle transition.
