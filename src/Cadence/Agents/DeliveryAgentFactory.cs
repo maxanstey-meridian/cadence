@@ -11,6 +11,11 @@ internal sealed class CadenceAgentFactory(
     IReadOnlyList<AgentSkill> skills
 )
 {
+    internal AgentToolSelection ExecutorGitNexus { get; } =
+        executorWorkspace.Register(GitNexusTool.Registration);
+    internal AgentToolSelection ReviewerGitNexus { get; } =
+        reviewerWorkspace.Register(GitNexusTool.Registration);
+
     internal AgentDefinition<CadenceState> Create(
         string participantId,
         string profileName,

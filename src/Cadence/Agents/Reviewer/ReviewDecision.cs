@@ -8,7 +8,18 @@ public sealed record ReviewDecision(
     IReadOnlyList<ReviewFinding> Findings,
     IReadOnlyList<ReviewConstraintAssessment> ConstraintAssessments,
     string? HumanQuestion = null,
-    HumanDecisionDomain? HumanDecisionDomain = null
+    HumanDecisionDomain? HumanDecisionDomain = null,
+    IReadOnlyList<ReviewAcceptanceAssessment>? AcceptanceAssessments = null
+)
+{
+    public IReadOnlyList<ReviewAcceptanceAssessment> AcceptanceAssessments { get; init; } =
+        AcceptanceAssessments ?? [];
+}
+
+public sealed record ReviewAcceptanceAssessment(
+    string AcceptanceId,
+    bool Satisfied,
+    IReadOnlyList<ReviewEvidenceReference> Evidence
 );
 
 public sealed record ReviewOutcomeAssessment(
@@ -47,7 +58,8 @@ public sealed record ReviewEvidenceReference(
     string? Stderr = null,
     string? OutcomeId = null,
     string? Constraint = null,
-    string? DoctrineClause = null
+    string? DoctrineClause = null,
+    string? AcceptanceId = null
 );
 
 public enum ReviewEvidenceKind
@@ -58,6 +70,7 @@ public enum ReviewEvidenceKind
     PacketOutcome,
     Constraint,
     DoctrineClause,
+    AcceptanceCriterion,
 }
 
 public enum ReviewFindingSeverity

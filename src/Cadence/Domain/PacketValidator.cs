@@ -32,6 +32,87 @@ public sealed class PacketValidator : AbstractValidator<Packet>
                     .Must(BeNonBlank)
                     .WithMessage("Packet outcome description is required.");
             });
+        RuleFor(packet => packet.Acceptance)
+            .Cascade(CascadeMode.Stop)
+            .NotEmpty()
+            .WithMessage("Packet must declare at least one acceptance criterion.")
+            .Must(criteria => criteria.All(criterion => criterion is not null))
+            .WithMessage("Packet acceptance must not contain null values.")
+            .Must(criteria =>
+                criteria
+                    .Where(criterion => !string.IsNullOrWhiteSpace(criterion.Id))
+                    .Select(criterion => criterion.Id.Trim())
+                    .Distinct()
+                    .Count()
+                == criteria.Count(criterion => !string.IsNullOrWhiteSpace(criterion.Id))
+            )
+            .WithMessage("Packet acceptance IDs must be non-empty and unique.");
+        RuleForEach(packet => packet.Acceptance)
+            .ChildRules(criterion =>
+            {
+                criterion
+                    .RuleFor(value => value.Id)
+                    .Must(BeNonBlank)
+                    .WithMessage("Packet acceptance id is required.");
+                criterion
+                    .RuleFor(value => value.OutcomeId)
+                    .Must(BeNonBlank)
+                    .WithMessage("Packet acceptance outcome is required.");
+                criterion
+                    .RuleFor(value => value.Requirement)
+                    .Must(BeNonBlank)
+                    .WithMessage("Packet acceptance requirement is required.");
+            });
+        RuleFor(packet => packet)
+            .Custom(
+                (packet, context) =>
+                {
+                    if (
+                        packet.Outcomes is null
+                        || packet.Acceptance is null
+                        || packet.Outcomes.Any(outcome => outcome is null)
+                        || packet.Acceptance.Any(criterion => criterion is null)
+                    )
+                    {
+                        return;
+                    }
+                    var outcomes = packet
+                        .Outcomes.Where(outcome => !string.IsNullOrWhiteSpace(outcome.Id))
+                        .Select(outcome => outcome.Id.Trim())
+                        .ToHashSet(StringComparer.Ordinal);
+                    foreach (var criterion in packet.Acceptance)
+                    {
+                        if (
+                            !string.IsNullOrWhiteSpace(criterion.OutcomeId)
+                            && !outcomes.Contains(criterion.OutcomeId.Trim())
+                        )
+                        {
+                            context.AddFailure(
+                                "Acceptance",
+                                $"Acceptance criterion '{criterion.Id}' references unknown outcome '{criterion.OutcomeId}'."
+                            );
+                        }
+                    }
+                    foreach (
+                        var outcome in outcomes.Where(id =>
+                            !packet.Acceptance.Any(criterion =>
+                                !string.IsNullOrWhiteSpace(criterion.OutcomeId)
+                                && string.Equals(
+                                    criterion.OutcomeId.Trim(),
+                                    id,
+                                    StringComparison.Ordinal
+                                )
+                            )
+                        )
+                    )
+                    {
+                        context.AddFailure(
+                            "Acceptance",
+                            $"Outcome '{outcome}' must have at least one acceptance criterion."
+                        );
+                    }
+                }
+            );
         RuleFor(packet => packet.Verification)
             .Cascade(CascadeMode.Stop)
             .NotEmpty()

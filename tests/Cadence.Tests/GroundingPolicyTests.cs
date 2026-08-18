@@ -252,6 +252,31 @@ public sealed class GroundingPolicyTests
     }
 
     [Fact]
+    public void Verification_evidence_inside_acceptance_assessments_must_be_authenticated()
+    {
+        var unauthenticated = VerificationEvidence("dotnet test", 0, "claimed", "");
+        var decision = Accepted() with
+        {
+            AcceptanceAssessments =
+            [
+                new(
+                    "criterion",
+                    true,
+                    [
+                        new(ReviewEvidenceKind.AcceptanceCriterion, AcceptanceId: "criterion"),
+                        TestSupport.FileEvidence(),
+                        unauthenticated,
+                    ]
+                ),
+            ],
+        };
+
+        ReviewerProblems(decision, Grounded(Verification(1, 0, stdout: "actual")))
+            .Should()
+            .ContainSingle();
+    }
+
+    [Fact]
     public void Runtime_evidence_must_match_the_latest_verification_attempt()
     {
         var stale = VerificationEvidence("dotnet test", 0, "stale", "");

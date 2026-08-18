@@ -118,6 +118,8 @@ public sealed class PipelineBehaviorTests
             advertised
                 .Should()
                 .Contain([
+                    "web_search",
+                    "web_fetch",
                     "git_status",
                     "git_diff",
                     "git_log",
@@ -125,6 +127,7 @@ public sealed class PipelineBehaviorTests
                     "git_blame",
                     "git_changed_files",
                     "git_compare",
+                    "gitnexus",
                 ]);
             advertised
                 .Should()
@@ -200,7 +203,8 @@ public sealed class PipelineBehaviorTests
             reviewer
                 .AdvertisedTools.SelectMany(tools => tools)
                 .Should()
-                .Contain("run_verification_1");
+                .Contain("run_verification_1")
+                .And.Contain("gitnexus");
             reviewer
                 .AdvertisedTools.SelectMany(tools => tools)
                 .Should()
@@ -249,8 +253,12 @@ public sealed class PipelineBehaviorTests
             executor
                 .AdvertisedTools.SelectMany(tools => tools)
                 .Should()
-                .NotContain("run_command_1")
-                .And.NotContain("run_verification_1");
+                .Contain("gitnexus")
+                .And.NotContain("run_command_1")
+                .And.NotContain("run_verification_1")
+                .And.NotContain("file_access_copy")
+                .And.NotContain("file_access_move")
+                .And.NotContain("file_access_create_directory");
         }
         finally
         {
@@ -302,7 +310,10 @@ public sealed class PipelineBehaviorTests
                 .AdvertisedTools.First()
                 .Should()
                 .Contain("run_command_1")
-                .And.Contain("run_verification_1");
+                .And.Contain("run_verification_1")
+                .And.Contain("file_access_copy")
+                .And.Contain("file_access_move")
+                .And.Contain("file_access_create_directory");
         }
         finally
         {
@@ -983,6 +994,7 @@ public sealed class PipelineBehaviorTests
         IReadOnlyList<AgentSkill>? skills = null
     )
     {
+        Environment.SetEnvironmentVariable("TAVILY_API_KEY", "cadence-test-key");
         timeProvider ??= TimeProvider.System;
         profiles ??= _ => new CadenceAgentProfile(200_000, 32_000, 80);
         var git = new GitProcess();
@@ -1158,6 +1170,7 @@ public sealed class PipelineBehaviorTests
             new Dictionary<string, object?>
             {
                 ["summary"] = "Implemented the requested feature file.",
+                ["commitMessage"] = "Add feature file implementation",
                 ["addressedConstraints"] = Array.Empty<object>(),
                 ["regressionTests"] = new Dictionary<string, object?>
                 {

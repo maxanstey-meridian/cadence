@@ -17,7 +17,13 @@ internal static class ReviewerAgent
                     .WithWorkspace(
                         agents.ReviewerWorkspace,
                         [
-                            AgentTools.Always<CadenceState>("read_file", "ls", "grep", "git:ro"),
+                            AgentTools.Always<CadenceState>(
+                                "read_file",
+                                "ls",
+                                "grep",
+                                "git:ro",
+                                agents.ReviewerGitNexus
+                            ),
                             AgentTools.Always<CadenceState>(agents.ReviewerWorkspace.Commands),
                         ]
                     )

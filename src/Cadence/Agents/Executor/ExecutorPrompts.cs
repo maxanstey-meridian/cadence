@@ -16,6 +16,12 @@ public static class ExecutorPrompts
                 + $"  Next action: {outcome.NextAction ?? "(none)"}"
             )
         );
+        var acceptance = string.Join(
+            "\n",
+            state.Packet.Acceptance.Select(criterion =>
+                $"- [{criterion.Id}] outcome={criterion.OutcomeId}: {criterion.Requirement}"
+            )
+        );
         var constraints =
             state.Packet.Constraints.Count == 0
                 ? "(none)"
@@ -25,7 +31,7 @@ public static class ExecutorPrompts
 
                 Latest Planner decision: {decision.Decision}
                 Latest Planner rationale: {decision.Rationale}
-                Safe next action: {decision.SafeNextAction}
+                Safe next action (one immediate action, not a scope or working set): {decision.SafeNextAction}
                 Corrected approach: {decision.CorrectedApproach ?? "(none)"}
                 Active accepted Planner constraints:
                 {string.Join(
@@ -51,7 +57,6 @@ public static class ExecutorPrompts
                 + $"Uncertainties: {string.Join("; ", value.Uncertainties)}\n"
                 + $"Next: {value.NextAction}"
             : "";
-        var activeSlice = CurrentWorkingSlice(state);
         return $"""
             Packet: {state.Packet.Title}
             Workspace: {state.WorkspacePath}
@@ -71,55 +76,28 @@ public static class ExecutorPrompts
             - A checkpoint-only invocation is the explicit exception: call write_checkpoint and return.
               The pipeline routes the checkpoint to Planner and handles reauthorization before Executor resumes.
 
-            Current working slice:
-            {activeSlice}
-
-            Only this slice is active. The complete packet and outcome ledger below are roadmap context,
-            not work to reconcile in this invocation. Do not inventory, investigate, or plan future phases
-            unless they are a direct dependency of the current slice.
-
             Implementation context:
             {state.Packet.ImplementationContext}
 
-            Delivery roadmap (authoritative outcome ledger):
+            Authoritative objective ledger:
             {outcomes}
+
+            Authoritative acceptance criteria (every criterion must be addressed exactly once with concrete evidence in submit_report):
+            {acceptance}
 
             Constraints:
             {constraints}{planner}{verification}{candidate}{review}{checkpoint}
             """;
     }
 
-    private static string CurrentWorkingSlice(CadenceState state)
-    {
-        if (
-            state.ReviewRepairRequired
-            && state.ReviewerDecision
-                is { Decision: ReviewDecisionValue.RequestChanges, Findings.Count: > 0 } review
-        )
-        {
-            return $"Repair the current Reviewer findings one at a time, starting with: {review.Findings[0].Description}";
-        }
-        if (state.VerificationResults.LastOrDefault(result => result.ExitCode != 0) is { } failure)
-        {
-            return $"Diagnose and repair the latest failed verification command: {failure.Command}";
-        }
-        if (state.MutationAuthorized && state.PlannerDecision is { } decision)
-        {
-            return decision.SafeNextAction;
-        }
-        return "No implementation slice is currently authorized. Follow the current lifecycle instruction.";
-    }
-
     private static string FormatReviewEvidence(ReviewEvidenceReference evidence) =>
-        $"kind={evidence.Kind}, path={evidence.Path ?? "(none)"}, line={evidence.Line?.ToString() ?? "(none)"}, symbol={evidence.Symbol ?? "(none)"}, command={evidence.Command ?? "(none)"}, exitCode={evidence.ExitCode?.ToString() ?? "(none)"}, stdout={evidence.Stdout ?? "(none)"}, stderr={evidence.Stderr ?? "(none)"}, outcomeId={evidence.OutcomeId ?? "(none)"}, constraint={evidence.Constraint ?? "(none)"}, doctrineClause={evidence.DoctrineClause ?? "(none)"}";
+        $"kind={evidence.Kind}, path={evidence.Path ?? "(none)"}, line={evidence.Line?.ToString() ?? "(none)"}, symbol={evidence.Symbol ?? "(none)"}, command={evidence.Command ?? "(none)"}, exitCode={evidence.ExitCode?.ToString() ?? "(none)"}, stdout={evidence.Stdout ?? "(none)"}, stderr={evidence.Stderr ?? "(none)"}, outcomeId={evidence.OutcomeId ?? "(none)"}, constraint={evidence.Constraint ?? "(none)"}, doctrineClause={evidence.DoctrineClause ?? "(none)"}, acceptanceId={evidence.AcceptanceId ?? "(none)"}";
 
     internal static string BuildCheckpointMessage(AgentCheckpointContext<CadenceState> context) =>
         $"""
             Context window approaching limit: {context.CurrentContextTokens} tokens used.
             Checkpoints are periodic continuity snapshots. A prior accepted checkpoint, even a recent one,
             does not satisfy this new trigger because work and context may have changed since it was written.
-            Preserve only the current working slice and one immediate successor action. Do not inventory or
-            enumerate future packet phases, outcomes, or backlog.
             Write a checkpoint of your current work state using the write_checkpoint tool.
             Mutation authority will close and the pipeline will route the checkpoint directly
             to Planner before Executor can continue.
@@ -133,10 +111,9 @@ public static class ExecutorPrompts
         of your current work state using the write_checkpoint tool. Checkpoints are
         periodic and repeat whenever the runtime emits a new trigger. A prior accepted
         checkpoint, however recent, does not satisfy the current trigger; write a fresh
-        snapshot of the current state. Summarize the current working slice, remaining
-        uncertainties for that slice, and one precise immediate next action. Do not
-        reconcile, inventory, or enumerate future phases, outcomes, or backlog. Do not
-        supply completed work, inspected files, changed files,
+        snapshot of the current state. Provide a successor-oriented summary,
+        remaining uncertainties, and one precise next
+        action. Do not supply completed work, inspected files, changed files,
         outcomes, accepted constraints, candidate state, or verification state.
         Those objective facts are derived from typed state and runtime evidence.
         Every checkpoint closes mutation authority and returns control to the pipeline,
@@ -163,13 +140,16 @@ public static class ExecutorPrompts
         Do not create formatting churn.
         Never mutate Git.
 
-        Large packets are intentionally completed across many Executor sessions. The complete
-        packet and outcome ledger are roadmap context, not a demand to understand, reconcile,
-        or plan every future phase before acting. Treat the dynamic "Current working slice" as
-        the only active implementation scope. Inspect later outcomes only when they are a direct
-        dependency or impose an invariant on that slice. Complete or materially advance the
-        slice, update its outcome evidence, and let the next checkpoint consultation schedule
-        what follows. Do not audit whether future outcomes are pre-existing or incomplete.
+        Large packets intentionally span many Executor sessions. Use three levels of scope:
+        - Delivery contract: the complete packet and all outcomes.
+        - Current working scope: InProgress outcomes, accepted Planner constraints, and any open
+          Reviewer findings or failed verification command.
+        - SafeNextAction: one immediate action within that scope; it does not define or limit the scope.
+        Understand the delivery contract only deeply enough to preserve its invariants and the direct
+        dependencies of work in progress.
+        NotStarted outcomes are future roadmap parked for later sessions: do not inventory,
+        reconcile, or plan them unless they directly constrain work in progress. Begin concrete
+        repository work promptly instead of rereading the packet.
 
         Mutation authority is a revocable, invocation-scoped lease. Read the current
         "Mutation authorized" value on every invocation and after every lifecycle transition.
@@ -245,10 +225,14 @@ public static class ExecutorPrompts
         uncertainties, and precise next action, then return control. Every checkpoint closes
         mutation authority and routes directly to Planner; do not call ask_planner merely to review a
         checkpoint. When every authoritative ledger entry is
-        complete and ready for verification, call submit_report with a summary, every active
+        complete and ready for verification, call submit_report with a summary, every acceptance
+        criterion claimed exactly once by exact ID with concrete evidence, and every active
         constraint addressed exactly once using its exact text (all packet constraints plus all
-        accepted Planner constraints), and a typed regression-test claim. submit_report validates
-        and consumes the ledger; do not resubmit outcomes.
+        accepted Planner constraints), and a typed regression-test claim. The CommitMessage becomes
+        the Git commit message for the candidate: write a concise imperative subject line (<=72 chars)
+        optionally followed by a blank line and a wrapped body describing what changed and why. Do
+        not mention Cadence, the packet title, or verification/review in the CommitMessage. submit_report
+        validates and consumes the ledger; do not resubmit outcomes.
         Use NotApplicable only with concrete evidence explaining why no regression test applies.
         Do not claim that work is complete
         merely because code was written; the configured verification and review stages own

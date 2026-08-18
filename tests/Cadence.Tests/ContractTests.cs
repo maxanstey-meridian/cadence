@@ -512,7 +512,7 @@ public sealed class ContractTests
     }
 
     [Fact]
-    public void Executor_message_elevates_the_bounded_planner_slice_above_the_delivery_roadmap()
+    public void Executor_message_renders_safe_next_action_as_one_immediate_action_not_a_scope()
     {
         var state = TestSupport.State() with
         {
@@ -520,10 +520,10 @@ public sealed class ContractTests
             ApprovedApproachRevision = 1,
             PlannerDecision = new PlannerDecision(
                 PlannerDecisionValue.Proceed,
-                "The inspected seam supports this slice.",
+                "The inspected seam supports this step.",
                 [],
                 ["src/adapter.cs"],
-                "Implement only the focused adapter test slice.",
+                "Update the inspected adapter method.",
                 null,
                 null,
                 null
@@ -532,89 +532,77 @@ public sealed class ContractTests
 
         var message = ExecutorPrompts.BuildMessage(state);
 
-        message.Should().Contain("Current working slice:");
-        message.Should().Contain("Implement only the focused adapter test slice.");
-        message.Should().Contain("Only this slice is active");
-        message.Should().Contain("Delivery roadmap (authoritative outcome ledger):");
         message
-            .IndexOf("Current working slice:", StringComparison.Ordinal)
             .Should()
-            .BeLessThan(
-                message.IndexOf(
-                    "Delivery roadmap (authoritative outcome ledger):",
-                    StringComparison.Ordinal
-                )
-            );
+            .Contain("Safe next action (one immediate action, not a scope or working set):");
+        message.Should().Contain("Update the inspected adapter method.");
+        message.Should().NotContain("Current working slice");
+        message.Should().NotContain("Only this slice is active");
+        message.Should().NotContain("authoritative active slice");
     }
 
     [Fact]
-    public void Planner_and_checkpoint_prompts_schedule_only_one_bounded_slice()
+    public void Executor_instructions_scope_global_understanding_to_invariants_and_current_work()
     {
-        var plannerMessage = PlannerPrompts.BuildMessage(TestSupport.State());
+        var prompt = ExecutorPrompts.Instructions;
 
-        plannerMessage.Should().Contain("Select one bounded working slice");
-        plannerMessage.Should().Contain("SafeNextAction is the authoritative active slice");
-        PlannerPrompts
-            .Instructions.Should()
-            .Contain("Large packets are expected to span many periodic Executor sessions");
-        PlannerPrompts.Instructions.Should().Contain("not a task list for later phases");
-        PlannerPrompts.Instructions.Should().Contain("not summarize the remaining delivery");
-        ExecutorPrompts
-            .CheckpointInstructions.Should()
-            .Contain("one precise immediate next action");
-        ExecutorPrompts
-            .CheckpointInstructions.Should()
-            .Contain("reconcile, inventory, or enumerate future phases");
+        prompt.Should().Contain("span many Executor sessions");
+        prompt.Should().Contain("Delivery contract: the complete packet and all outcomes");
+        prompt.Should().Contain("invariants and the direct");
+        prompt.Should().Contain("Current working scope: InProgress outcomes");
+        prompt.Should().Contain("accepted Planner constraints");
+        prompt.Should().Contain("Reviewer findings or failed verification command");
+        prompt.Should().Contain("NotStarted outcomes are future roadmap");
+        prompt.Should().Contain("do not inventory,");
+        prompt.Should().Contain("Use three levels of scope");
+        prompt.Should().Contain("SafeNextAction: one immediate action within that scope");
+        prompt.Should().Contain("it does not define or limit the scope");
+        prompt.Should().Contain("repository work promptly instead of rereading the packet");
+        prompt.Should().NotContain("current task");
+        prompt.Should().NotContain("current assignment");
+        prompt.Should().NotContain("only this action is active");
+    }
+
+    [Fact]
+    public void Planner_instructions_keep_future_backlog_out_of_current_constraints()
+    {
+        var prompt = PlannerPrompts.Instructions;
+
+        prompt.Should().Contain("span many Executor sessions");
+        prompt.Should().Contain("not the whole delivery");
+        prompt.Should().Contain("cross-cutting invariants, never a task list for future");
+        prompt.Should().Contain("NotStarted outcomes or a restatement of the remaining backlog");
+        prompt.Should().Contain("reconcile every packet outcome before acting");
+        prompt.Should().Contain("SafeNextAction is one immediate action");
+        prompt.Should().Contain("Proceed authorizes the");
+        prompt.Should().Contain("without additional Planner constraints");
+        prompt.Should().Contain("For NeedsHuman, it is to await");
+        prompt.Should().Contain("For Stop, it is to stop without");
+        prompt.Should().NotContain("authoritative active slice");
+        prompt.Should().NotContain("Select one bounded working slice");
+        prompt.Should().NotContain("current task");
+        prompt.Should().NotContain("current assignment");
+        prompt.Should().NotContain("only this action is active");
+    }
+
+    [Fact]
+    public void Planner_output_instruction_keeps_safe_next_action_below_authorized_scope()
+    {
         new PlannerDecisionOutput()
             .Instructions.Should()
-            .Contain("one bounded SafeNextAction for the next Executor session");
+            .Contain("one immediate action, not the authorized scope");
     }
 
     [Fact]
-    public void Executor_repair_routes_override_the_prior_planner_slice()
+    public void Checkpoint_instructions_preserve_progress_without_enumerating_later_phases()
     {
-        var planner = new PlannerDecision(
-            PlannerDecisionValue.Proceed,
-            "The original slice was safe.",
-            [],
-            ["src/adapter.cs"],
-            "Continue the original adapter slice.",
-            null,
-            null,
-            null
-        );
-        var verification = TestSupport.State() with
-        {
-            ApproachRevision = 1,
-            ApprovedApproachRevision = 1,
-            PlannerDecision = planner,
-            VerificationResults =
-            [
-                new VerificationResult(0, "task check", 1, "", "failed", TimeSpan.Zero, false),
-            ],
-        };
-        var review = verification with
-        {
-            VerificationResults = [],
-            ReviewRepairRequired = true,
-            ReviewerDecision = new ReviewDecision(
-                ReviewDecisionValue.RequestChanges,
-                TestSupport.Doctrine().Sha256,
-                "Repair required.",
-                [],
-                [new ReviewFinding(ReviewFindingSeverity.High, "Restore the invariant.", [])],
-                []
-            ),
-        };
+        var prompt = ExecutorPrompts.CheckpointInstructions;
 
-        ExecutorPrompts
-            .BuildMessage(verification)
-            .Should()
-            .Contain("Diagnose and repair the latest failed verification command: task check");
-        ExecutorPrompts
-            .BuildMessage(review)
-            .Should()
-            .Contain("starting with: Restore the invariant.");
+        prompt.Should().Contain("successor-oriented summary");
+        prompt.Should().Contain("one precise next");
+        prompt.Should().NotContain("current working slice");
+        prompt.Should().NotContain("future phase");
+        prompt.Should().NotContain("backlog");
     }
 
     [Fact]
@@ -622,6 +610,7 @@ public sealed class ContractTests
     {
         var report = new SubmitReportRequest(
             "Implemented",
+            "Implement feature",
             [],
             new RegressionTestClaim(
                 RegressionTestDisposition.Added,

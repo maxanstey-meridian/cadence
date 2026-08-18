@@ -91,7 +91,7 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
 public sealed class PlannerDecisionOutput : IAgentOutputDefinition<CadenceState, PlannerDecision>
 {
     public string Instructions =>
-        "Return a validated planning decision grounded in repository evidence with one bounded SafeNextAction for the next Executor session.";
+        "Return a validated planning decision grounded in packet and repository evidence; SafeNextAction must be one immediate action, not the authorized scope.";
 
     public IValidator<PlannerDecision> Validator { get; } = new PlannerDecisionValidator();
 

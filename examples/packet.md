@@ -5,6 +5,10 @@ base: main
 outcomes:
   - id: packet-contract
     description: Cadence users can author a delivery packet from product-facing documentation
+acceptance:
+  - id: packet-example
+    outcome: packet-contract
+    requirement: The checked-in example parses and documents every required packet field
 commands:
   - task format
 verification:

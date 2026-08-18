@@ -17,14 +17,16 @@ public sealed class ExecutorPolicyTests
             0
         );
 
-        var directive = await ExecutorPolicies
-            .CreateTurnPolicy()
-            .Continue(observation, TestContext.Current.CancellationToken);
+        var policy = ExecutorPolicies.CreateTurnPolicy();
+        var directive = await policy.Continue(observation, TestContext.Current.CancellationToken);
 
+        policy.MaxContinuationAttempts.Should().Be(8);
         directive.Should().NotBeNull();
         directive!.RequiredToolName.Should().BeNull();
         directive.Prompt.Should().ContainAll("ask_planner", "write_checkpoint", "submit_report");
         directive.Prompt.Should().Contain("implementation autonomously");
+        directive.Prompt.Should().Contain("take the next concrete repository action");
+        directive.Prompt.Should().Contain("when its actual boundary is reached");
         directive
             .Prompt.Should()
             .Contain("never for ordinary implementation or deterministic gate repair");

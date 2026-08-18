@@ -10,6 +10,12 @@ public static class ReviewerPrompts
             "\n",
             state.Packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
         );
+        var acceptance = string.Join(
+            "\n",
+            state.Packet.Acceptance.Select(criterion =>
+                $"- [{criterion.Id}] outcome={criterion.OutcomeId}: {criterion.Requirement}"
+            )
+        );
         var packetConstraints =
             state.Packet.Constraints.Count > 0
                 ? string.Join("\n", state.Packet.Constraints.Select(c => $"- {c}"))
@@ -48,6 +54,22 @@ public static class ReviewerPrompts
                         .. verificationEvidence,
                     ]
                 )),
+                acceptanceAssessments = state.Packet.Acceptance.Select(
+                    criterion => new ReviewAcceptanceAssessment(
+                        criterion.Id,
+                        true,
+                        [
+                            new ReviewEvidenceReference(
+                                ReviewEvidenceKind.AcceptanceCriterion,
+                                AcceptanceId: criterion.Id
+                            ),
+                            new ReviewEvidenceReference(
+                                ReviewEvidenceKind.Symbol,
+                                Symbol: "ImplementedSymbol"
+                            ),
+                        ]
+                    )
+                ),
                 constraintAssessments = state.Constraints.Select(
                     constraint => new ReviewConstraintAssessment(
                         constraint,
@@ -75,16 +97,14 @@ public static class ReviewerPrompts
             Reviewer doctrine source: {doctrine.Source}
             Reviewer doctrine SHA-256: {doctrine.Sha256}
 
-            Reviewer doctrine (exact configured content):
-            <reviewer_doctrine>
-            {doctrine.Content}
-            </reviewer_doctrine>
-
             Implementation context:
             {state.Packet.ImplementationContext}
 
             Outcomes:
             {outcomes}
+
+            Acceptance criteria:
+            {acceptance}
 
             Packet constraints:
             {packetConstraints}
@@ -114,7 +134,7 @@ public static class ReviewerPrompts
             )}
 
             Use git_changed_files with the exact pinned base and candidate SHAs before deciding.
-            Inspect every returned path with git_diff, following pagination until each diff is
+            Inspect every returned path with git_compare, following pagination until each diff is
             complete. Read every current touched file and relevant unchanged integration seam.
             Independently run every generated command run_verification_1 through
             run_verification_{state.Packet.Verification.Count} after Git grounding and in packet order.
@@ -122,12 +142,12 @@ public static class ReviewerPrompts
             requires every latest rerun to be green. RequestChanges may stop at the first runtime-failed
             command, but its Critical/High VerificationCommand evidence must reproduce that exact
             command, exitCode, stdout, and stderr. An empty changed-file result is valid, but still
-            inspect the repository-wide git_diff and existing implementation.
+            inspect the repository-wide git_compare and existing implementation.
 
             Return a structured JSON decision with doctrineHash exactly {doctrine.Sha256}.
-            Assess every outcome ID and combined packet/Planner constraint exactly once. Evidence kinds are
-            FileLine, Symbol, VerificationCommand, PacketOutcome, Constraint, and
-            DoctrineClause. VerificationCommand must reproduce command, exitCode, stdout, and
+            Assess every outcome ID, acceptance criterion ID, and combined packet/Planner constraint exactly once. Evidence kinds are
+            FileLine, Symbol, VerificationCommand, PacketOutcome, AcceptanceCriterion, Constraint, and
+            DoctrineClause. Every satisfied acceptance criterion requires its exact AcceptanceCriterion reference and FileLine or Symbol evidence; aggregate verification alone is insufficient. VerificationCommand must reproduce command, exitCode, stdout, and
             stderr exactly. Every finding must quote an exact DoctrineClause plus precise defect
             evidence. Delivered outcomes and satisfied constraints require FileLine, Symbol, or
             authenticated VerificationCommand implementation evidence in addition to their typed identity.
@@ -164,7 +184,7 @@ public static class ReviewerPrompts
             regression coverage proves the delivered behavior.
 
             Use git_changed_files for the exact pinned base and candidate, then a repository-wide
-            git_diff for that range. Follow changed-file and diff pagination to completion, inspect every
+            git_compare for that range. Follow changed-file and diff pagination to completion, inspect every
             changed path, and read relevant unchanged source, tests, contracts, and configuration.
             Independently run every generated run_verification_N command after Git grounding and in
             packet order. Exact arguments, invocation order, status, and process results are
@@ -173,8 +193,9 @@ public static class ReviewerPrompts
             VerificationCommand evidence matches that runtime result. Pagination completion, changed-path
             coverage, and semantic use remain mandatory prompt-enforced obligations.
 
-            Return Accept when all outcomes and constraints hold and no Critical or High finding
-            remains. Medium and Low findings may remain on Accept when genuinely non-blocking.
+            Return Accept when all outcomes and acceptance criteria are delivered, all constraints hold and no material finding remains.
+            Critical and High findings are material. Medium and Low findings may remain on Accept
+            only when genuinely non-blocking and therefore not material to an outcome or constraint.
             RequestChanges requires at least one concrete Executor-fixable Critical or High finding.
             NeedsHuman is only for product, UX, business policy, security policy, permissions, tenancy,
             data policy, migration policy, legal, or compliance decisions. Do not manufacture findings

@@ -149,6 +149,7 @@ public static class ReviewerPolicies
     ) =>
         decision
             .Outcomes.SelectMany(outcome => outcome.Evidence)
+            .Concat(decision.AcceptanceAssessments.SelectMany(assessment => assessment.Evidence))
             .Concat(decision.ConstraintAssessments.SelectMany(assessment => assessment.Evidence))
             .Concat(decision.Findings.SelectMany(finding => finding.Evidence));
 

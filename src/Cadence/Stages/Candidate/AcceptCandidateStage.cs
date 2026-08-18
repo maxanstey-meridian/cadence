@@ -10,8 +10,20 @@ public sealed partial class AcceptCandidateStage(ReviewerDoctrine reviewerDoctri
         CancellationToken cancellationToken
     )
     {
+        var reviewIsStructurallyComplete =
+            state.ReviewerDecision is { } review
+            && new ReviewDecisionValidator(
+                reviewerDoctrine,
+                state.Packet.Outcomes.Select(outcome => outcome.Id),
+                state.Constraints,
+                state.VerificationResults,
+                state.Packet.Acceptance.Select(criterion => criterion.Id)
+            )
+                .Validate(review)
+                .IsValid;
         if (
-            state.CandidateSha is not { } candidateSha
+            !reviewIsStructurallyComplete
+            || state.CandidateSha is not { } candidateSha
             || state.ReviewerDecision?.Decision != ReviewDecisionValue.Accept
             || !string.Equals(
                 state.ReviewerCandidateSha,

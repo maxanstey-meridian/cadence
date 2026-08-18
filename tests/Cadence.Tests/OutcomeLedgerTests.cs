@@ -146,7 +146,7 @@ public sealed class OutcomeLedgerTests
                 "exact failing command",
                 "claims, not proof",
                 "reopen any outcome",
-                "Delivery roadmap (authoritative outcome ledger)",
+                "Authoritative objective ledger",
                 "Non-authoritative continuity checkpoint"
             );
         typeof(WriteCheckpointRequest)

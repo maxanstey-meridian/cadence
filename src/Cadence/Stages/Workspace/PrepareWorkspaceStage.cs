@@ -8,22 +8,31 @@ public sealed partial class PrepareWorkspaceStage(WorkspacePreparation preparati
         CancellationToken cancellationToken
     )
     {
+        var reviewRecovery = state.CandidateSha is not null && state.ReviewerDecision is null;
         var recovering =
-            state.ExecutorTransition is ExecutorTransition.PlannerRequested
-            {
-                Request.QuestionType: PlannerQuestionType.SessionReliability,
-            };
-        var prepared = recovering
-            ? await preparation.ValidateExistingAsync(
-                state.PinnedBaseSha,
-                state.WorkspacePath,
-                cancellationToken
-            )
+            reviewRecovery
+            || state.ExecutorTransition
+                is ExecutorTransition.PlannerRequested
+                {
+                    Request.QuestionType: PlannerQuestionType.SessionReliability,
+                };
+        var prepared =
+            reviewRecovery
+                ? await preparation.ValidateReviewWorkspaceAsync(
+                    state.WorkspacePath,
+                    cancellationToken
+                )
+            : recovering
+                ? await preparation.ValidateExistingAsync(
+                    state.PinnedBaseSha,
+                    state.WorkspacePath,
+                    cancellationToken
+                )
             : await preparation.PrepareAsync(state.Packet, state.WorkspacePath, cancellationToken);
         return new Outcome<CadenceState>.Success(
             state with
             {
-                PinnedBaseSha = prepared.PinnedBaseSha,
+                PinnedBaseSha = reviewRecovery ? state.PinnedBaseSha : prepared.PinnedBaseSha,
             }
         );
     }

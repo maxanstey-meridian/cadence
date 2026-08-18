@@ -19,7 +19,7 @@ public static class ExecutorPolicies
 
     public static AgentTurnPolicy<CadenceState> CreateTurnPolicy() =>
         new(
-            maxContinuationAttempts: 2,
+            maxContinuationAttempts: 8,
             (observation, _) =>
                 ValueTask.FromResult<AgentTurnDirective?>(
                     !observation.Context.State.MutationAuthorized
@@ -36,10 +36,11 @@ public static class ExecutorPolicies
                         : new AgentTurnDirective(
                             """
                             Your previous response was not a lifecycle route. Continue the
-                             implementation autonomously, call update_outcomes as progress changes,
-                             write_checkpoint when preserving continuity, or submit_report only
-                             when every packet outcome is ready for verification. Do not treat
-                             prose as completion; the next response must use one lifecycle tool.
+                            implementation autonomously, call update_outcomes as progress changes,
+                            write_checkpoint when the runtime requests a checkpoint, or submit_report only
+                            when every packet outcome is ready for verification. Do not stop at
+                            narration: take the next concrete repository action for the current
+                            slice. Use a lifecycle tool when its actual boundary is reached.
                              Use ask_planner only for a runtime-required consultation, consequential
                              unresolved direction, or genuine blockage after bounded investigation;
                              never for ordinary implementation or deterministic gate repair.

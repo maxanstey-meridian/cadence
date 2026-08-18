@@ -182,7 +182,7 @@ internal static class Program
             : resolved.Packet ?? accepted.Value.Packet;
         var state = accepted.Value.Resume(packet);
         var run = await store.GetRunAsync(runId, cancellationToken);
-        if (run.Status is LedgerRunStatus.Faulted or LedgerRunStatus.Interrupted)
+        if (run.Status != LedgerRunStatus.Running && IsResumableStatus(run.Status))
         {
             await store.ReopenRunAsync(runId, cancellationToken);
         }
@@ -234,14 +234,7 @@ internal static class Program
 
             var store = new SqliteLedgerStore(ledgerPath);
             var run = await store.GetRunAsync(runId, cancellationToken);
-            if (
-                run.Status
-                is not (
-                    LedgerRunStatus.Running
-                    or LedgerRunStatus.Faulted
-                    or LedgerRunStatus.Interrupted
-                )
-            )
+            if (!IsResumableStatus(run.Status))
             {
                 continue;
             }
@@ -263,6 +256,7 @@ internal static class Program
         && string.Equals(left.Repository, right.Repository, StringComparison.Ordinal)
         && string.Equals(left.Base, right.Base, StringComparison.Ordinal)
         && left.Outcomes.SequenceEqual(right.Outcomes)
+        && left.Acceptance.SequenceEqual(right.Acceptance)
         && left.Commands.SequenceEqual(right.Commands, StringComparer.Ordinal)
         && left.Verification.SequenceEqual(right.Verification, StringComparer.Ordinal)
         && left.Constraints.SequenceEqual(right.Constraints, StringComparer.Ordinal)
@@ -319,6 +313,8 @@ internal static class Program
                     FormatInteraction = terminal.FormatInteraction,
                     SubmitTextAsync = terminal.SubmitAsync,
                     CanSubmitText = terminal.HasPending,
+                    Title = initialState.Packet.Title,
+                    WorkingDirectory = initialState.Packet.Repository,
                 },
                 TerminalizingAsync = async (completion, _) =>
                     await store.CompleteRunAsync(
@@ -361,6 +357,13 @@ internal static class Program
             TerminalPipelineStatus.Cancelled => LedgerRunStatus.Interrupted,
             _ => LedgerRunStatus.Faulted,
         };
+
+    internal static bool IsResumableStatus(LedgerRunStatus status) =>
+        status
+            is LedgerRunStatus.Running
+                or LedgerRunStatus.Failed
+                or LedgerRunStatus.Faulted
+                or LedgerRunStatus.Interrupted;
 
     private static ExecutionConfiguration LoadExecutionConfiguration(
         string home,

@@ -68,7 +68,11 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
 
         var client = new OpenAIClient(
             new ApiKeyCredential(apiKey.Length == 0 ? "cadence-local-proxy-placeholder" : apiKey),
-            new OpenAIClientOptions { Endpoint = endpoint }
+            new OpenAIClientOptions
+            {
+                Endpoint = endpoint,
+                NetworkTimeout = TimeSpan.FromSeconds(600),
+            }
         );
 #pragma warning disable OPENAI001
         IChatClient chatClient = provider.WireApi switch
@@ -90,30 +94,30 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
         {
             chatClient = new OpenRouterReasoningChatClient(chatClient);
         }
-        if (profile.ReasoningEffort is null)
+        if (profile.ReasoningEffort is not null)
         {
-            return chatClient;
+            var effort = profile.ReasoningEffort switch
+            {
+                "low" => ReasoningEffort.Low,
+                "medium" => ReasoningEffort.Medium,
+                "high" => ReasoningEffort.High,
+                _ => throw new InvalidOperationException(
+                    $"Profile '{profileName}' reasoningEffort must be 'low', 'medium', or 'high'."
+                ),
+            };
+            chatClient = chatClient
+                .AsBuilder()
+                .ConfigureOptions(options =>
+                    options.Reasoning = new ReasoningOptions
+                    {
+                        Effort = effort,
+                        Output = ReasoningOutput.Summary,
+                    }
+                )
+                .Build();
         }
 
-        var effort = profile.ReasoningEffort switch
-        {
-            "low" => ReasoningEffort.Low,
-            "medium" => ReasoningEffort.Medium,
-            "high" => ReasoningEffort.High,
-            _ => throw new InvalidOperationException(
-                $"Profile '{profileName}' reasoningEffort must be 'low', 'medium', or 'high'."
-            ),
-        };
-        return chatClient
-            .AsBuilder()
-            .ConfigureOptions(options =>
-                options.Reasoning = new ReasoningOptions
-                {
-                    Effort = effort,
-                    Output = ReasoningOutput.Summary,
-                }
-            )
-            .Build();
+        return new StreamRetryChatClient(chatClient);
     }
 
     private ProfileConfiguration GetProfile(string name) =>

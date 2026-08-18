@@ -122,4 +122,45 @@ public sealed class WorkspaceRecoveryTests
             }
         }
     }
+
+    [Fact]
+    public async Task Review_recovery_preserves_the_original_pinned_base()
+    {
+        var repository = TestSupport.CreateGitRepository();
+        var workspace = Path.Combine(Path.GetTempPath(), $"cadence-review-{Guid.NewGuid():N}");
+        try
+        {
+            TestSupport.Git(Path.GetTempPath(), "clone", "--no-local", repository, workspace);
+            TestSupport.Git(workspace, "remote", "remove", "origin");
+            var pinnedBase = TestSupport.Head(workspace);
+            File.AppendAllText(Path.Combine(workspace, "README.md"), "candidate\n");
+            TestSupport.Git(workspace, "add", "README.md");
+            TestSupport.Git(workspace, "commit", "-m", "candidate");
+            var candidate = TestSupport.Head(workspace);
+            var state = CadenceState.Create(TestSupport.Packet(), pinnedBase, workspace) with
+            {
+                CandidateSha = candidate,
+                VerificationResults =
+                [
+                    new VerificationResult(0, "test", 0, "ok", "", TimeSpan.Zero, false),
+                ],
+            };
+
+            var result = await new PrepareWorkspaceStage(
+                new WorkspacePreparation(new GitProcess())
+            ).ExecuteAsync(state, TestContext.Current.CancellationToken);
+
+            var recovered = result.Should().BeOfType<Outcome<CadenceState>.Success>().Subject.State;
+            recovered.PinnedBaseSha.Should().Be(pinnedBase);
+            recovered.PinnedBaseSha.Should().NotBe(candidate);
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+            if (Directory.Exists(workspace))
+            {
+                Directory.Delete(workspace, recursive: true);
+            }
+        }
+    }
 }

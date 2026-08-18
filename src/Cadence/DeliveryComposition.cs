@@ -44,6 +44,12 @@ public sealed class CadenceComposition
             )
             .Route(
                 on: cadence.PrepareWorkspace.Success,
+                when: IsReviewRecovery,
+                to: cadence.Reviewer,
+                label: "review recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
                 when: state => state.ExecutorTransition is null,
                 to: cadence.Executor,
                 label: "workspace prepared"
@@ -201,6 +207,11 @@ public sealed class CadenceComposition
 
     private static bool LatestCommandPassed(CadenceState state) =>
         state.VerificationResults.LastOrDefault()?.ExitCode == 0;
+
+    private static bool IsReviewRecovery(CadenceState state) =>
+        state.CandidateSha is not null
+        && state.VerificationResults.Count > 0
+        && state.ReviewerDecision is null;
 
     private static bool LatestCommandFailed(CadenceState state) =>
         state.VerificationResults.LastOrDefault()?.ExitCode is not (null or 0);

@@ -62,6 +62,9 @@ public sealed class SubmitReportRequestValidator : AbstractValidator<SubmitRepor
         RuleFor(request => request.Summary)
             .NotEmpty()
             .WithErrorCode("submit_report.summary.required");
+        RuleFor(request => request.CommitMessage)
+            .NotEmpty()
+            .WithErrorCode("submit_report.commit_message.required");
         RuleFor(request => request.AddressedConstraints)
             .NotNull()
             .WithErrorCode("submit_report.addressed_constraints.required");
@@ -72,6 +75,14 @@ public sealed class SubmitReportRequestValidator : AbstractValidator<SubmitRepor
             .WithErrorCode("submit_report.regression_tests.required");
         RuleFor(request => request.RegressionTests)
             .SetValidator(new RegressionTestClaimValidator());
+        RuleFor(request => request.AcceptanceClaims)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
+            .WithErrorCode("submit_report.acceptance_claims.required")
+            .Must(claims => claims.All(claim => claim is not null))
+            .WithErrorCode("submit_report.acceptance_claims.null_item");
+        RuleForEach(request => request.AcceptanceClaims)
+            .SetValidator(new AcceptanceClaimValidator());
         if (state is not null)
         {
             RuleFor(_ => state.ReviewRepairRequired)
@@ -120,6 +131,47 @@ public sealed class SubmitReportRequestValidator : AbstractValidator<SubmitRepor
                 "submit_report.outcomes.incomplete"
             );
         }
+        var acceptanceIds = (request.AcceptanceClaims ?? [])
+            .Where(claim => claim is not null)
+            .Select(claim => claim.AcceptanceId)
+            .ToArray();
+        var expectedAcceptance = state
+            .Packet.Acceptance.Select(criterion => criterion.Id)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (
+            var duplicate in acceptanceIds
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+        )
+        {
+            AddFailure(
+                context,
+                nameof(request.AcceptanceClaims),
+                $"Acceptance criterion '{duplicate.Key}' must be claimed exactly once.",
+                "submit_report.acceptance_claims.duplicate"
+            );
+        }
+
+        foreach (var unknown in acceptanceIds.Where(value => !expectedAcceptance.Contains(value)))
+        {
+            AddFailure(
+                context,
+                nameof(request.AcceptanceClaims),
+                $"Unknown acceptance criterion: {unknown}",
+                "submit_report.acceptance_claims.unknown"
+            );
+        }
+
+        foreach (var missing in expectedAcceptance.Except(acceptanceIds))
+        {
+            AddFailure(
+                context,
+                nameof(request.AcceptanceClaims),
+                $"Unaddressed acceptance criterion: {missing}",
+                "submit_report.acceptance_claims.missing"
+            );
+        }
+
         var addressed = request.AddressedConstraints.Select(claim => claim.Constraint).ToArray();
         foreach (
             var duplicate in addressed
@@ -164,6 +216,19 @@ public sealed class SubmitReportRequestValidator : AbstractValidator<SubmitRepor
         string message,
         string errorCode
     ) => context.AddFailure(new ValidationFailure(propertyName, message) { ErrorCode = errorCode });
+}
+
+public sealed class AcceptanceClaimValidator : AbstractValidator<AcceptanceClaim>
+{
+    public AcceptanceClaimValidator()
+    {
+        RuleFor(claim => claim.AcceptanceId)
+            .NotEmpty()
+            .WithErrorCode("acceptance_claim.id.required");
+        RuleFor(claim => claim.Evidence)
+            .Must(PlannerDecisionValidator.BeMeaningful)
+            .WithErrorCode("acceptance_claim.evidence.meaningful");
+    }
 }
 
 public sealed class RegressionTestClaimValidator : AbstractValidator<RegressionTestClaim>

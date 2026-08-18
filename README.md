@@ -122,6 +122,10 @@ outcomes:
     description: Deliver the requested behavior
 commands:
   - task format
+acceptance:
+  - id: concrete-proof
+    outcome: example
+    requirement: A focused test proves the requested behavior for the concrete scenario
 verification:
   - dotnet test
 constraints:
@@ -133,10 +137,18 @@ Inspect the relevant implementation and tests before choosing the change surface
 
 The frontmatter is the delivery contract. `title`, `repository`, and `base` must be
 nonblank. `outcomes` is an ordered, nonempty list with unique nonblank IDs and nonblank
-descriptions. `commands` is an optional ordered list of exact nonblank repository commands
+descriptions. `acceptance` is an ordered, nonempty list of unique nonblank IDs, declared
+outcome references, and nonblank concrete proof requirements; every outcome needs at least
+one criterion. `commands` is an optional ordered list of exact nonblank repository commands
 available only to Executor after Planner authorizes mutation. `verification` is an ordered,
 nonempty list of exact nonblank read-only commands; duplicates remain separate checks.
-`constraints` is optional and its text is preserved exactly. Quote commands and constraints that YAML would otherwise interpret as values,
+`constraints` is optional and its text is preserved exactly.
+
+Outcomes describe delivered capability. Acceptance criteria state independently reviewable
+behavioral or test proof obligations. Constraints bound every valid implementation.
+Verification entries are exact deterministic commands Cadence runs. Keep the Markdown body
+to bounded architecture, ownership, inspection seams, and non-obvious rationale; requirements
+that affect acceptance must appear in structured `acceptance`, not only in body prose. Quote commands and constraints that YAML would otherwise interpret as values,
 including `true`, `false`, `null`, and numbers. Unknown fields and duplicate YAML keys
 are rejected.
 
@@ -239,10 +251,10 @@ Then run Cadence from any directory:
 cadence run packet.md
 ```
 
-Executor-phase runs left `Running`, `Interrupted`, or `Faulted` can resume from their retained workspace and
+Executor-phase runs left `Running`, `Failed`, `Interrupted`, or `Faulted` can resume from their retained workspace and
 accepted state in `~/.cadence/runs/<run-id>/ledger.sqlite3`, with fresh agent sessions. Pass
 either the run ID or its original packet path; packet lookup selects the newest matching
-resumable run. Ready, failed, and cancelled runs remain terminal:
+resumable run. Ready and cancelled runs remain terminal:
 
 ```sh
 cadence resume <run-id>

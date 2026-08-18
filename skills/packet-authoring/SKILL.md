@@ -34,12 +34,18 @@ The packet must not depend on:
 3. Resolve the target repository and declared base branch.
 4. Inspect enough checked-in implementation context to identify real owner files and make the outcomes concrete.
 5. Discover exact implementation and verification commands from tooling checked in on `base`, such as `Taskfile.yml`, `package.json`, solution files, or documented repository workflows. Never invent a command.
-6. Classify every meaningful unknown:
+6. Resolve every required external dependency or service integration before authoring:
+   - name exact package IDs and versions already present on `base`, or the exact version to add;
+   - name the exact supported API, provider type, extension method, configuration options, and required environment variables when those details constrain implementation;
+   - verify those facts against checked-in lockfiles or package metadata, locally installed package documentation or assemblies, or authoritative upstream documentation/source;
+   - include the verified facts in the packet so Executor and Planner do not have to rediscover them or guess;
+   - if exact dependency facts cannot be verified, treat that as a blocking packet-authoring gap rather than delegating open-ended package discovery to Executor.
+7. Classify every meaningful unknown:
    - **repository-discoverable**: Executor can resolve it through bounded inspection of named owner files or their direct collaborators;
    - **Planner-owned**: engineering direction, architecture, repository procedure, verification strategy, or scope interpretation that Planner can decide from repository evidence;
    - **human-required**: product, UX, business, security, permission, tenancy, data, migration, legal, or compliance intent;
    - **blocking**: implementation cannot begin faithfully until the human supplies a decision.
-7. Run the Executor-fit and run-size checks below before drafting.
+8. Run the Executor-fit and run-size checks below before drafting.
 
 Do not encode an assumption as agreed intent. If a human-required or blocking decision changes what must be delivered, stop and ask the smallest necessary question.
 
@@ -102,7 +108,7 @@ Use this shape:
 ```yaml
 ---
 title: Implement account registration
-repository: ../..
+repository: /absolute/path/to/repo
 base: main
 outcomes:
   - id: registration
@@ -111,6 +117,13 @@ outcomes:
     description: An existing email address is rejected without creating another account
 commands:
   - task generate
+acceptance:
+  - id: registration-valid
+    outcome: registration
+    requirement: A focused test proves valid details create an account
+  - id: duplicate-email-rejected
+    outcome: duplicate-email
+    requirement: A focused test proves an existing email creates no additional account
 verification:
   - task check
 constraints:
@@ -121,9 +134,10 @@ constraints:
 Required frontmatter:
 
 - `title`: concise nonblank delivery name.
-- `repository`: absolute path or a path relative to the packet file.
+- `repository`: absolute path to the target Git repository.
 - `base`: Git reference used to prepare the isolated workspace.
 - `outcomes`: ordered, nonempty list of unique nonblank `id` and nonblank `description` values.
+- `acceptance`: ordered, nonempty list of unique nonblank `id`, an `outcome` referencing a declared outcome ID, and a nonblank concrete `requirement`. Every outcome must have at least one criterion.
 - `verification`: ordered, nonempty list of exact nonblank commands supported by repository tooling.
 
 Optional frontmatter:
@@ -132,6 +146,12 @@ Optional frontmatter:
 - `constraints`: ordered exact requirements. Omit it or use `[]` when none apply.
 
 Quote strings containing YAML-significant punctuation, especially `: `, `#`, braces, brackets, or scalar-looking values such as `true`, `false`, `null`, and numbers.
+
+The four contract categories have distinct jobs: outcomes describe delivered capability;
+acceptance criteria state independently reviewable behavioral or test proof obligations;
+constraints bound every valid implementation; verification entries are exact deterministic
+commands Cadence runs. Never move a proof obligation into prose merely because a green aggregate
+command may exercise it.
 
 ### Outcomes
 
@@ -181,7 +201,7 @@ Use only the sections that earn their keep. The body may include:
 - `## Unknowns and routes`: meaningful repository-discoverable or Planner-owned unknowns and how to resolve them;
 - `## Scope boundaries`: explicit exclusions and release or safety boundaries;
 - `## Implementation constraints`: settled technical decisions, invariants, and nearby patterns that must be preserved;
-- `## Verification notes`: why the commands prove the outcomes or what evidence remains manual.
+- Keep the body to bounded implementation context: architecture, ownership, initial inspection seams, and non-obvious rationale. Put every required behavioral or test scenario in structured `acceptance`; do not hide proof obligations in prose verification notes.
 
 The body should:
 
@@ -232,6 +252,7 @@ Do not write or present a packet as ready when:
 - a human-required decision is unresolved;
 - the work does not fit one coherent run;
 - implementation requires a repository workflow that is described in prose but absent from `commands`;
+- implementation requires a new or changed external package or service integration whose exact package ID, version, supported API, and configuration have not been verified and stated;
 - verification commands are invented, unavailable, or materially insufficient;
 - Executor would need broad discovery before it could propose a first approach.
 

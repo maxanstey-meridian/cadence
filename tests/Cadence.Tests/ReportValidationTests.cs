@@ -185,6 +185,7 @@ public sealed class ReportValidationTests
     private static SubmitReportRequest Report() =>
         new(
             "Implemented",
+            "Implement feature",
             [],
             new RegressionTestClaim(
                 RegressionTestDisposition.ExistingCoverage,

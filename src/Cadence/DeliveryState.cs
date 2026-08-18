@@ -138,6 +138,13 @@ public sealed record CadenceState(
 
     public CadenceState Resume(Packet packet)
     {
+        if (
+            ReviewerDecision?.Decision == ReviewDecisionValue.NeedsHuman
+            && ReviewerHumanResolution is null
+        )
+        {
+            return this with { Packet = packet, ReviewerDecision = null };
+        }
         if (CandidateSha is not null || VerificationResults.Count > 0)
         {
             throw new InvalidOperationException(

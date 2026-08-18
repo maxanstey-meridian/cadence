@@ -34,9 +34,16 @@ public sealed record FailedPlannerInstructionContext(
 
 public sealed record SubmitReportRequest(
     string Summary,
+    string CommitMessage,
     IReadOnlyList<ConstraintClaim> AddressedConstraints,
-    RegressionTestClaim RegressionTests
-);
+    RegressionTestClaim RegressionTests,
+    IReadOnlyList<AcceptanceClaim>? AcceptanceClaims = null
+)
+{
+    public IReadOnlyList<AcceptanceClaim> AcceptanceClaims { get; init; } = AcceptanceClaims ?? [];
+}
+
+public sealed record AcceptanceClaim(string AcceptanceId, string Evidence);
 
 public sealed record RegressionTestClaim(
     RegressionTestDisposition Disposition,

@@ -397,6 +397,7 @@ public sealed class CadenceStateTests
     {
         var report = new SubmitReportRequest(
             "Implemented",
+            "Implement feature",
             [],
             new RegressionTestClaim(
                 RegressionTestDisposition.ExistingCoverage,

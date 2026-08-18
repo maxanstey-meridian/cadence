@@ -74,7 +74,8 @@ public sealed class HostBoundaryTests
         {
             var clients = new ConfiguredChatClients(configuration);
             var executor = clients.Build("executor");
-            executor.Should().BeOfType<OpenRouterReasoningChatClient>();
+            executor.Should().BeOfType<StreamRetryChatClient>();
+            executor.GetService<OpenRouterReasoningChatClient>().Should().NotBeNull();
             executor.GetService<ChatClientMetadata>()!.DefaultModelId.Should().Be("deepseek/model");
             clients
                 .Build("planner")
@@ -362,6 +363,13 @@ public sealed class HostBoundaryTests
                     description: " First result "
                   - id: second
                     description: Second result
+                acceptance:
+                  - id: " criterion-first "
+                    outcome: " first "
+                    requirement: " First scenario "
+                  - id: criterion-second
+                    outcome: second
+                    requirement: Second scenario
                 commands:
                   - " task generate "
                   - "task contracts"
@@ -386,6 +394,18 @@ public sealed class HostBoundaryTests
             packet.Repository.Should().Be(repository);
             packet.Base.Should().Be("main");
             packet.Outcomes.Select(outcome => outcome.Id).Should().Equal("first", "second");
+            packet
+                .Acceptance.Select(criterion => criterion.Id)
+                .Should()
+                .Equal("criterion-first", "criterion-second");
+            packet
+                .Acceptance.Select(criterion => criterion.OutcomeId)
+                .Should()
+                .Equal("first", "second");
+            packet
+                .Acceptance.Select(criterion => criterion.Requirement)
+                .Should()
+                .Equal("First scenario", "Second scenario");
             packet.Commands.Should().Equal(" task generate ", "task contracts");
             packet.Verification.Should().Equal(" dotnet test ", "dotnet test");
             packet.Constraints.Should().Equal(" Preserve exact text ");
@@ -601,6 +621,18 @@ public sealed class HostBoundaryTests
             .Be(LedgerRunStatus.Interrupted);
     }
 
+    [Theory]
+    [InlineData(LedgerRunStatus.Running, true)]
+    [InlineData(LedgerRunStatus.Failed, true)]
+    [InlineData(LedgerRunStatus.Faulted, true)]
+    [InlineData(LedgerRunStatus.Interrupted, true)]
+    [InlineData(LedgerRunStatus.Ready, false)]
+    [InlineData(LedgerRunStatus.Cancelled, false)]
+    public void Explicit_resume_statuses_are_operator_controlled(
+        LedgerRunStatus status,
+        bool resumable
+    ) => Program.IsResumableStatus(status).Should().Be(resumable);
+
     [Fact]
     public async Task Resume_target_accepts_a_packet_path_and_selects_the_latest_matching_run()
     {
@@ -738,6 +770,10 @@ public sealed class HostBoundaryTests
             outcomes:
               - id: outcome-1
                 description: Deliver behavior
+            acceptance:
+              - id: criterion-1
+                outcome: outcome-1
+                requirement: A concrete scenario proves delivery
             verification:
               - dotnet test
             {{extra}}

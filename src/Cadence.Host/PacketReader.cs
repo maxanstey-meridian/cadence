@@ -24,6 +24,13 @@ internal static class PacketReader
                     outcome.Description.Trim()
                 ))
                 .ToArray(),
+            Acceptance = input
+                .Value.Acceptance.Select(criterion => new PacketAcceptanceCriterion(
+                    criterion.Id.Trim(),
+                    criterion.OutcomeId.Trim(),
+                    criterion.Requirement.Trim()
+                ))
+                .ToArray(),
             Commands = input.Value.Commands ?? [],
             Constraints = input.Value.Constraints ?? [],
             ImplementationContext = input.Context,

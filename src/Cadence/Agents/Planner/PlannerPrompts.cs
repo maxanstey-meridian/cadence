@@ -36,8 +36,8 @@ public static class PlannerPrompts
                     + $"Evidence:\n{string.Join("\n", fact.Request.Evidence.Select(item => $"- {item}"))}\n"
                     + RenderFailedInstruction(fact.Request.FailedInstruction),
             ExecutorTransition.CheckpointWritten =>
-                "Checkpoint review requested. Inspect the latest checkpoint, outcome ledger, and current "
-                    + "worktree, then assign one bounded next working slice and only its necessary constraints.",
+                "Checkpoint review requested. Inspect the latest checkpoint, authoritative outcome ledger, "
+                    + "and current worktree, then decide whether and under what constraints Executor may continue.",
             _ => "(no request provided)",
         };
         var activeConstraints =
@@ -51,7 +51,7 @@ public static class PlannerPrompts
                 rationale = "The inspected implementation seams support the proposed approach.",
                 constraints = Array.Empty<string>(),
                 evidenceUsed = new[] { "src/example.ts: inspected implementation seam." },
-                safeNextAction = "Update the inspected adapter method and add its focused regression test.",
+                safeNextAction = "Update ExampleAdapter.SendAsync to pass the cancellation token.",
                 correctedApproach = (string?)null,
                 humanQuestion = (string?)null,
                 humanDecisionDomain = (string?)null,
@@ -65,11 +65,7 @@ public static class PlannerPrompts
             Implementation context:
             {packet.ImplementationContext}
 
-            Scheduling responsibility:
-            Select one bounded working slice for the next Executor session. The full packet is a delivery
-            roadmap, not one session's working set. SafeNextAction is the authoritative active slice.
-
-            Delivery roadmap (authoritative outcome ledger):
+            Authoritative outcome ledger:
             {outcomes}
 
             Latest continuity checkpoint (non-authoritative claims):
@@ -112,14 +108,6 @@ public static class PlannerPrompts
         and constraints, the executor's question, proposed approach, and evidence. The
         executor's evidence is an untrusted pointer to verify, not proof.
 
-        Large packets are expected to span many periodic Executor sessions. You are the scheduler
-        for the next session, not the author of a packet-wide implementation plan on every consultation.
-        SafeNextAction is the authoritative current working slice. Make it one coherent, bounded slice
-        that Executor can materially advance before the next checkpoint. Do not enumerate future phases,
-        restate the remaining backlog, or require Executor to reconcile every packet outcome before acting.
-        Constraints contain only obligations for that slice plus genuinely cross-cutting invariants; they
-        are not a task list for later phases.
-
         You have read-only access to the entire workspace. When a decision depends on a
         repository fact, inspect it yourself before deciding and cite the files, symbols,
         or other facts you inspected. Do not ask the executor or human to provide source
@@ -141,15 +129,14 @@ public static class PlannerPrompts
           business policy, security policy, permissions, tenancy, data policy, migration
           policy, legal, or compliance. Repository facts and engineering decisions are not
           human questions.
-        - Stop only when you cannot state a safe engineering next action after inspecting
+        - Stop only when you cannot state a safe implementation action after inspecting
           the packet, supplied context, and available repository evidence. Do not use Stop
           merely because inspection has not yet been performed.
 
-        Audit the complete proposed approach for the current working slice, not only its literal
-        question. Derive its real requirement from packet intent and existing repository invariants.
-        Correct XY problems, false premises, and local overfits directly. Expand into later outcomes
-        only when they are direct dependencies or impose invariants on the current slice.
-        Within that slice, decide whether the executable surface must expand, contract, split, or change owner.
+        Audit the complete proposed approach, not only its literal question. Derive the real
+        requirement from packet intent and existing repository invariants. Correct XY problems,
+        false premises, and local overfits directly. Decide whether the executable surface must
+        expand, contract, split, or change owner.
 
         Return ReviseApproach when the approach or executable surface is wrong. Reject the
         proposed approach, provide CorrectedApproach and one concrete SafeNextAction, and require
@@ -173,13 +160,23 @@ public static class PlannerPrompts
         the failing command and observed result directly. Do not repeat the instruction without
         explaining why the prior attempt did not test it.
 
-        State one concrete, bounded SafeNextAction for every response. It must identify the next
-        implementation slice, not summarize the remaining delivery. Escalate only decisions genuinely
-        owned by the Human. Stop only when no safe engineering next action can be stated after
-        inspection; missing command output is not enough to stop.
+        Large packets intentionally span many Executor sessions; each consultation schedules
+        continuity for work in progress, not the whole delivery. Constraints are obligations
+        for that work plus genuinely cross-cutting invariants, never a task list for future
+        NotStarted outcomes or a restatement of the remaining backlog. Do not require Executor
+        to reconcile every packet outcome before acting. SafeNextAction is one immediate action
+        inside the broader phase, never a definition of phase, scope, or working set.
 
-        Include a direct rationale and the evidence you actually used. Proceed means no
-        implementation obligations remain and Constraints must be empty.
+        State one concrete SafeNextAction for every response. For authorizing decisions, it is one
+        immediate implementation action within the approved scope, not the scope itself. For
+        ReviseApproach, it is the next read-only action needed to resubmit the corrected approach.
+        For NeedsHuman, it is to await the stated Human decision. For Stop, it is to stop without
+        mutation and preserve the inspected evidence. Escalate only decisions genuinely owned by
+        the Human. Stop only when no safe implementation action can be stated after inspection;
+        missing command output is not enough to stop.
+
+        Include a direct rationale and the evidence you actually used. Proceed authorizes the
+        approach without additional Planner constraints, and Constraints must be empty.
         ProceedWithConstraints means concrete, checkable obligations remain and Constraints
         must contain every such obligation.
 

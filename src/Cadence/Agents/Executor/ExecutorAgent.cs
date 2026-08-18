@@ -30,6 +30,7 @@ internal static class ExecutorAgent
                                 "ls",
                                 "grep",
                                 "git:ro",
+                                agents.ExecutorGitNexus,
                                 agents.ExecutorWorkspace.Commands
                             ),
                             AgentTools.When<CadenceState>(
@@ -37,7 +38,10 @@ internal static class ExecutorAgent
                                 "write_file",
                                 "delete_file",
                                 "replace",
-                                "replace_lines"
+                                "replace_lines",
+                                "copy_file",
+                                "move_file",
+                                "create_directory"
                             ),
                         ],
                         dirtyWorkCheckpoint.InterceptAsync

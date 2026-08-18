@@ -9,20 +9,24 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
         ReviewerDoctrine doctrine,
         IEnumerable<string>? expectedOutcomeIds = null,
         IEnumerable<string>? expectedConstraints = null,
-        IEnumerable<VerificationResult>? verificationResults = null
+        IEnumerable<VerificationResult>? verificationResults = null,
+        IEnumerable<string>? expectedAcceptanceIds = null
     )
     {
         var validateCurrentFacts =
             expectedOutcomeIds is not null
             || expectedConstraints is not null
-            || verificationResults is not null;
+            || verificationResults is not null
+            || expectedAcceptanceIds is not null;
         var outcomes = expectedOutcomeIds?.ToHashSet(StringComparer.Ordinal) ?? [];
         var constraints = expectedConstraints?.ToHashSet(StringComparer.Ordinal) ?? [];
         var verification = verificationResults?.ToArray() ?? [];
+        var acceptance = expectedAcceptanceIds?.ToHashSet(StringComparer.Ordinal) ?? [];
         var evidenceValidator = new ReviewEvidenceReferenceValidator(
             doctrine,
             outcomes,
             constraints,
+            acceptance,
             verification,
             validateCurrentFacts
         );
@@ -40,6 +44,14 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
         RuleFor(decision => decision.Findings).NotNull().WithErrorCode("review.findings.required");
         RuleForEach(decision => decision.Findings)
             .SetValidator(new ReviewFindingValidator(evidenceValidator));
+        RuleFor(decision => decision.AcceptanceAssessments)
+            .Cascade(CascadeMode.Stop)
+            .NotNull()
+            .WithErrorCode("review.acceptance_assessments.required")
+            .Must(assessments => assessments.All(assessment => assessment is not null))
+            .WithErrorCode("review.acceptance_assessments.null_item");
+        RuleForEach(decision => decision.AcceptanceAssessments)
+            .SetValidator(new ReviewAcceptanceAssessmentValidator(evidenceValidator));
         RuleFor(decision => decision.ConstraintAssessments)
             .NotNull()
             .WithErrorCode("review.constraint_assessments.required");
@@ -50,6 +62,10 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
         RuleFor(decision => decision)
             .Custom(
                 (decision, context) => ValidateConstraintCoverage(decision, constraints, context)
+            );
+        RuleFor(decision => decision)
+            .Custom(
+                (decision, context) => ValidateAcceptanceCoverage(decision, acceptance, context)
             );
         RuleFor(decision => decision.Findings)
             .Must(findings =>
@@ -89,6 +105,90 @@ public sealed class ReviewDecisionValidator : AbstractValidator<ReviewDecision>
             .Null()
             .WithErrorCode("review.human_decision_domain.forbidden")
             .When(decision => decision.Decision != ReviewDecisionValue.NeedsHuman);
+    }
+
+    private static void ValidateAcceptanceCoverage(
+        ReviewDecision decision,
+        IReadOnlySet<string> expected,
+        ValidationContext<ReviewDecision> context
+    )
+    {
+        if (expected.Count == 0)
+        {
+            return;
+        }
+
+        var assessments = (decision.AcceptanceAssessments ?? [])
+            .Where(assessment => assessment is not null)
+            .ToArray();
+        AddCoverageFailures(
+            assessments.Select(x => x.AcceptanceId),
+            expected,
+            "acceptanceAssessments",
+            "Acceptance criterion",
+            "review.acceptance_assessments",
+            context
+        );
+        foreach (var assessment in assessments)
+        {
+            if (
+                !(assessment.Evidence ?? []).Any(reference =>
+                    reference is not null
+                    && reference.Kind == ReviewEvidenceKind.AcceptanceCriterion
+                    && string.Equals(
+                        reference.AcceptanceId,
+                        assessment.AcceptanceId,
+                        StringComparison.Ordinal
+                    )
+                )
+            )
+            {
+                context.AddFailure(
+                    new ValidationFailure(
+                        "acceptanceAssessments",
+                        $"Acceptance criterion '{assessment.AcceptanceId}' requires its exact typed reference."
+                    )
+                    {
+                        ErrorCode = "review.acceptance_assessments.reference_required",
+                    }
+                );
+            }
+
+            if (
+                assessment.Satisfied
+                && !(assessment.Evidence ?? []).Any(reference =>
+                    reference is not null
+                    && reference.Kind is ReviewEvidenceKind.FileLine or ReviewEvidenceKind.Symbol
+                )
+            )
+            {
+                context.AddFailure(
+                    new ValidationFailure(
+                        "acceptanceAssessments",
+                        $"Satisfied acceptance criterion '{assessment.AcceptanceId}' requires precise implementation evidence."
+                    )
+                    {
+                        ErrorCode =
+                            "review.acceptance_assessments.implementation_evidence_required",
+                    }
+                );
+            }
+        }
+        if (
+            decision.Decision == ReviewDecisionValue.Accept
+            && assessments.Any(assessment => !assessment.Satisfied)
+        )
+        {
+            context.AddFailure(
+                new ValidationFailure(
+                    "acceptanceAssessments",
+                    "Accept requires every acceptance criterion to be satisfied."
+                )
+                {
+                    ErrorCode = "review.acceptance_assessments.unsatisfied_for_accept",
+                }
+            );
+        }
     }
 
     private static void ValidateConstraintCoverage(
@@ -288,10 +388,31 @@ public sealed class ReviewDecisionOutput(ReviewerDoctrine doctrine)
             doctrine,
             state.Packet.Outcomes.Select(outcome => outcome.Id),
             state.Constraints,
-            state.VerificationResults
+            state.VerificationResults,
+            state.Packet.Acceptance.Select(criterion => criterion.Id)
         );
 
     public IReadOnlyList<AgentOutputExample<ReviewDecision>> Examples(CadenceState state) => [];
+}
+
+public sealed class ReviewAcceptanceAssessmentValidator
+    : AbstractValidator<ReviewAcceptanceAssessment>
+{
+    public ReviewAcceptanceAssessmentValidator(
+        IValidator<ReviewEvidenceReference> evidenceValidator
+    )
+    {
+        RuleFor(assessment => assessment.AcceptanceId)
+            .Must(PlannerDecisionValidator.BeMeaningful)
+            .WithErrorCode("review.acceptance_assessment.id.meaningful");
+        RuleFor(assessment => assessment.Evidence)
+            .Cascade(CascadeMode.Stop)
+            .NotEmpty()
+            .WithErrorCode("review.acceptance_assessment.evidence.required")
+            .Must(evidence => evidence.All(reference => reference is not null))
+            .WithErrorCode("review.acceptance_assessment.evidence.null_item");
+        RuleForEach(assessment => assessment.Evidence).SetValidator(evidenceValidator);
+    }
 }
 
 public sealed class ReviewConstraintAssessmentValidator
@@ -352,6 +473,7 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
         ReviewerDoctrine doctrine,
         IReadOnlySet<string> outcomes,
         IReadOnlySet<string> constraints,
+        IReadOnlySet<string> acceptance,
         IReadOnlyList<VerificationResult> verification,
         bool validateCurrentFacts
     )
@@ -367,6 +489,7 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
                         doctrine,
                         outcomes,
                         constraints,
+                        acceptance,
                         verification,
                         validateCurrentFacts,
                         context
@@ -379,6 +502,7 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
         ReviewerDoctrine doctrine,
         IReadOnlySet<string> outcomes,
         IReadOnlySet<string> constraints,
+        IReadOnlySet<string> acceptance,
         IReadOnlyList<VerificationResult> verification,
         bool validateCurrentFacts,
         ValidationContext<ReviewEvidenceReference> context
@@ -403,6 +527,9 @@ public sealed class ReviewEvidenceReferenceValidator : AbstractValidator<ReviewE
                 && (!validateCurrentFacts || outcomes.Contains(reference.OutcomeId)),
             ReviewEvidenceKind.Constraint => reference.Constraint is not null
                 && (!validateCurrentFacts || constraints.Contains(reference.Constraint)),
+            ReviewEvidenceKind.AcceptanceCriterion => !string.IsNullOrWhiteSpace(
+                reference.AcceptanceId
+            ) && (!validateCurrentFacts || acceptance.Contains(reference.AcceptanceId)),
             ReviewEvidenceKind.DoctrineClause => !string.IsNullOrWhiteSpace(
                 reference.DoctrineClause
             ) && doctrine.Content.Contains(reference.DoctrineClause, StringComparison.Ordinal),

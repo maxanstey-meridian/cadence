@@ -7,3 +7,4 @@ TestResults/
 /.cadence/
 /config.json
 /reviewer-doctrine.md
+.threadkeeper.sqlite3

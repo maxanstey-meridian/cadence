@@ -10,6 +10,10 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
         CancellationToken cancellationToken
     )
     {
+        var commitMessage = state.ExecutorTransition
+            is ExecutorTransition.ReportSubmitted { Report: { CommitMessage: var message } }
+            ? message
+            : state.Packet.Title;
         var addResult = await git.RunAsync(state.WorkspacePath, ["add", "-A"], cancellationToken);
         EnsureSucceeded("git add", addResult, cancellationToken);
         var commitResult = await git.RunAsync(
@@ -22,7 +26,7 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
                 "commit",
                 "--allow-empty",
                 "-m",
-                "Cadence candidate",
+                commitMessage,
             ],
             cancellationToken
         );

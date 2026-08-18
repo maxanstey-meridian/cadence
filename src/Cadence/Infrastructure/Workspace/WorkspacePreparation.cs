@@ -53,6 +53,37 @@ public sealed class WorkspacePreparation(GitProcess git)
         }
     }
 
+    public async Task<WorkspacePreparationResult> ValidateReviewWorkspaceAsync(
+        string workspacePath,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!Directory.Exists(workspacePath))
+        {
+            throw new WorkspacePreparationException($"Resume workspace not found: {workspacePath}");
+        }
+
+        var remotes = await git.RunAsync(workspacePath, ["remote"], cancellationToken);
+        if (remotes.TimedOut || remotes.ExitCode != 0)
+        {
+            throw new WorkspacePreparationException("Resume workspace remotes could not be read.");
+        }
+        if (!string.IsNullOrWhiteSpace(remotes.Stdout))
+        {
+            throw new WorkspacePreparationException(
+                "Resume workspace must not have a Git remote configured."
+            );
+        }
+
+        var head = await git.RunAsync(workspacePath, ["rev-parse", "HEAD"], cancellationToken);
+        if (head.TimedOut || head.ExitCode != 0)
+        {
+            throw new WorkspacePreparationException("Resume workspace HEAD could not be read.");
+        }
+
+        return new WorkspacePreparationResult(head.Stdout.Trim(), workspacePath);
+    }
+
     public async Task<WorkspacePreparationResult> ValidateExistingAsync(
         string pinnedBaseSha,
         string workspacePath,

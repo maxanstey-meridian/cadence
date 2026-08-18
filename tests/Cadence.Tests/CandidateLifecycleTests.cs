@@ -115,6 +115,45 @@ public sealed class CandidateLifecycleTests
         }
     }
 
+    [Fact]
+    public async Task Acceptance_rejects_a_review_that_omits_current_acceptance_criteria()
+    {
+        var repository = TestSupport.CreateGitRepository();
+        try
+        {
+            var candidate = TestSupport.Head(repository);
+            var state = CadenceState.Create(
+                TestSupport.Packet() with
+                {
+                    Repository = repository,
+                    Acceptance = [new("criterion", "outcome-1", "proof")],
+                },
+                candidate,
+                repository
+            ) with
+            {
+                CandidateSha = candidate,
+                VerifiedCandidateSha = candidate,
+                ReviewerCandidateSha = candidate,
+                VerificationIndex = 1,
+                VerificationResults = [new(0, "dotnet test", 0, "", "", TimeSpan.Zero, false)],
+                ReviewerDecision = AcceptedDecision(),
+            };
+
+            var act = async () =>
+                await new AcceptCandidateStage(
+                    TestSupport.Doctrine(),
+                    new GitProcess()
+                ).ExecuteAsync(state, TestContext.Current.CancellationToken);
+
+            await act.Should().ThrowAsync<InvalidOperationException>();
+        }
+        finally
+        {
+            Directory.Delete(repository, recursive: true);
+        }
+    }
+
     private static VerificationResult Result(int exitCode, string output) =>
         new(0, "test", exitCode, output, "", TimeSpan.Zero, false);
 
