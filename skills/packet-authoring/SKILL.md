@@ -27,7 +27,9 @@ The packet must not depend on:
 1. Recover the agreed intent from the conversation:
    - desired result;
    - decisions already made;
+   - reasons that materially constrain implementation;
    - explicit constraints and exclusions;
+   - observable completion evidence;
    - unresolved questions;
    - repository evidence already gathered.
 2. Read the target repository's instructions.
@@ -48,6 +50,47 @@ The packet must not depend on:
 8. Run the Executor-fit and run-size checks below before drafting.
 
 Do not encode an assumption as agreed intent. If a human-required or blocking decision changes what must be delivered, stop and ask the smallest necessary question.
+
+## Authoring Standard
+
+Write for a capable senior coding agent, not a literal task runner.
+
+Include decisions whose omission would invite a materially different implementation. Leave repository-discoverable details for Executor to inspect. The packet should constrain outcomes and important boundaries, not dictate every class, helper, test name, or edit sequence.
+
+### Simplicity and Replacement Discipline
+
+Simplicity is a default acceptance boundary, not an optional style preference. Author the smallest delivery that replaces or changes the requested behavior at its existing owner.
+
+- When the human asks to replace or remove behavior, require the old path to be removed. Do not permit an adjacent `v2`, parallel implementation, feature flag, adapter, alias, fallback, or second source of truth unless the human explicitly requested coexistence.
+- Do not add backward compatibility, migration, dual-read/write behavior, legacy deserialization, or deprecation scaffolding without a concrete persisted-data, shipped-consumer, or rollout requirement stated by the human.
+- Reject provenance theatre: evidence DTOs, receipts, hashes, manifests, audit trails, ledgers, copied assessments, model self-attestation, or other machinery that records claims about facts already owned by production state. Require provenance only when a real external trust boundary or named consumer needs it. Tests and reviewers inspecting production state are not consumers that justify a second proof model.
+- Do not turn sequential local state into a generalized workflow, event history, revision protocol, or state machine. Do not add abstractions, seams, helpers, wrappers, ports, or dependencies merely to make a small change look architecturally complete.
+- Do not harden against impossible internal states or speculative future failures. Defensive checks must protect a plausible failure at an actual input, persistence, concurrency, process, network, filesystem, security, or publication boundary.
+- Do not preserve removed concepts under new names. If correctness still needs part of the old mechanism, state the exact invariant and retain only the smallest state or check that owns it.
+- Distinguish behavior being removed from correctness boundaries that remain. Reviewer must be able to reject both a compatibility-preserving non-replacement and an overcorrection that deletes real safety.
+- Prefer direct production-path behavior and aggregate verification over prompt wording, mock choreography, validator ceremony, implementation-detail assertions, or redundant proof objects.
+
+These are standing defaults. A packet should state task-specific exceptions only when the human explicitly chose them; it should not invite Executor or Planner to rediscover or negotiate an exception.
+
+Good specificity:
+
+- the behavior that must exist;
+- settled ownership and dependency direction;
+- compatibility or migration requirements explicitly chosen by the human;
+- which existing mechanism must be reused;
+- exact public names or contracts the human chose;
+- meaningful exclusions;
+- exact verification commands;
+- external API facts already researched and approved.
+
+Bad specificity:
+
+- speculative file lists presented as mandatory;
+- pseudocode for implementation that repository inspection should determine;
+- generic "best practice" instructions;
+- exhaustive prohibitions responding to one imagined failure mode;
+- commands copied from memory rather than repository tooling;
+- instructions for Cadence routing, checkpointing, sessions, or review protocol.
 
 ## Clean-Base Grounding
 
@@ -125,7 +168,8 @@ acceptance:
     outcome: duplicate-email
     requirement: A focused test proves an existing email creates no additional account
 verification:
-  - task check
+  - label: check
+    command: task check
 constraints:
   - Preserve the existing authentication boundary
 ---
@@ -138,7 +182,7 @@ Required frontmatter:
 - `base`: Git reference used to prepare the isolated workspace.
 - `outcomes`: ordered, nonempty list of unique nonblank `id` and nonblank `description` values.
 - `acceptance`: ordered, nonempty list of unique nonblank `id`, an `outcome` referencing a declared outcome ID, and a nonblank concrete `requirement`. Every outcome must have at least one criterion.
-- `verification`: ordered, nonempty list of exact nonblank commands supported by repository tooling.
+- `verification`: ordered, nonempty list of entries with a nonblank `label` (a short kebab-case slug used as the tool name suffix, e.g. `unit-tests`, `lint`) and a nonblank `command` string supported by repository tooling.
 
 Optional frontmatter:
 
@@ -175,12 +219,14 @@ command may exercise it.
 
 ### Verification
 
+- Each entry has a `label` (short kebab-case slug, e.g. `unit-tests`, `lint`, `typecheck`) and a `command` (exact shell command).
+- The `label` becomes the executor and reviewer tool name: `run_verification_<label>`. Choose a descriptive label that helps the model understand what the command does.
 - Use exact commands supported by checked-in repository tooling on `base`.
 - Prefer the repository's established aggregate gate when it materially proves the outcomes.
 - Add focused commands only when the aggregate gate does not prove a material behavior.
 - Verification commands must be read-only because Cadence reruns them against the captured candidate and rejects candidate mutation.
 - Commands run from the prepared repository root.
-- Preserve command text, order, and intentional duplicates exactly.
+- Preserve entry order, labels, and command text exactly.
 
 ### Constraints
 
@@ -254,7 +300,11 @@ Do not write or present a packet as ready when:
 - implementation requires a repository workflow that is described in prose but absent from `commands`;
 - implementation requires a new or changed external package or service integration whose exact package ID, version, supported API, and configuration have not been verified and stated;
 - verification commands are invented, unavailable, or materially insufficient;
-- Executor would need broad discovery before it could propose a first approach.
+- Executor would need broad discovery before it could propose a first approach;
+- replacement semantics are ambiguous enough to permit an adjacent implementation while retaining the old path;
+- the packet invites compatibility, migration, provenance, ceremony, speculative abstraction, or defensive hardening without an explicit requirement and real owning boundary;
+- the packet protects removed machinery more strongly than the behavior the human actually requested;
+- Reviewer could not distinguish completion from a plausible but wrong implementation.
 
 Report the smallest blocker instead of writing around it.
 
@@ -285,6 +335,10 @@ Re-read the packet as the only handoff available inside a clean workspace. Ask:
 - Can Executor inspect the named files and form a first approach without broad archaeology?
 - Is this genuinely one run, or an initiative that should be split?
 - Can Reviewer prove each positive outcome without circular evidence?
+- Does replacement remove the old path rather than add a neighboring version or compatibility route?
+- Does every new abstraction, compatibility path, provenance record, or hardening check protect a stated requirement at a real boundary?
+- Did the packet preserve only actual correctness invariants rather than the ceremony of the previous implementation?
+- Did the author accidentally prescribe an implementation choice that repository inspection should own?
 
 Repair mechanical and wording problems that do not change human intent. Ask the human when the repair would require a new human-owned decision.
 
@@ -304,7 +358,7 @@ Commands:
 - task generate
 
 Verification:
-- task check
+- check: task check
 
 Grounding:
 - repository and base resolved

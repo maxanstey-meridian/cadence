@@ -25,7 +25,7 @@ public sealed class VerificationOperation(
 
         if (ctx.VerificationIndex >= commands.Count)
         {
-            var allPassed = ctx.VerificationResults.All(r => r.ExitCode == 0);
+            var allPassed = ctx.VerificationResults.All(r => r.ExitCode == 0 && !r.TimedOut);
             var finalKind = allPassed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
             blockSw.Stop();
             return new OperationResult<CadenceState>(
@@ -40,9 +40,11 @@ public sealed class VerificationOperation(
             );
         }
 
-        var command = commands[ctx.VerificationIndex];
+        var command = commands[ctx.VerificationIndex].Command;
+        var label = commands[ctx.VerificationIndex].Label;
         var result = await RunCommandAsync(
             ctx.VerificationIndex,
+            label,
             command,
             ctx.WorkspacePath,
             cancellationToken
@@ -67,7 +69,6 @@ public sealed class VerificationOperation(
         {
             VerificationIndex = newIndex,
             VerificationResults = results,
-            VerifiedCandidateSha = passed && newIndex == commands.Count ? ctx.CandidateSha : null,
         };
 
         var kind = passed ? OutcomeKinds.CommandPassed : OutcomeKinds.CommandFailed;
@@ -95,6 +96,7 @@ public sealed class VerificationOperation(
 
     private async Task<VerificationResult> RunCommandAsync(
         int index,
+        string label,
         string command,
         string workspacePath,
         CancellationToken cancellationToken
@@ -132,17 +134,16 @@ public sealed class VerificationOperation(
                 new[]
                 {
                     stderr,
-                    "Verification output exceeded the complete-output capture limit.",
+                    "Verification output was truncated at the capture limit; the process exit code remains authoritative.",
                 }.Where(value => !string.IsNullOrWhiteSpace(value))
             );
         }
 
         return new VerificationResult(
             index,
+            label,
             command,
-            process.TimedOut || process.StdoutTruncated || process.StderrTruncated
-                ? -1
-                : process.ExitCode,
+            process.TimedOut ? -1 : process.ExitCode,
             process.Stdout,
             stderr,
             process.Duration,

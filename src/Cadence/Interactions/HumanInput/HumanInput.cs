@@ -34,10 +34,3 @@ public abstract record ReviewerHumanAnswer
 
     public sealed record Stop : ReviewerHumanAnswer;
 }
-
-public enum ReviewerHumanResolution
-{
-    HumanDecision,
-    ContinueRepairs,
-    Stop,
-}

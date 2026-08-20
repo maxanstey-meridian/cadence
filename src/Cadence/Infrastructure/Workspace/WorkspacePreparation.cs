@@ -3,7 +3,7 @@ using Cadence.Git;
 
 namespace Cadence;
 
-public sealed record WorkspacePreparationResult(string PinnedBaseSha, string WorkspacePath);
+public sealed record WorkspacePreparationResult(string PinnedBaseSha);
 
 public sealed class WorkspacePreparationException : Exception
 {
@@ -34,7 +34,7 @@ public sealed class WorkspacePreparation(GitProcess git)
             await CheckoutAsync(workspacePath, pinnedSha, cancellationToken);
             await RemoveOriginAsync(workspacePath, cancellationToken);
             await VerifyHeadAsync(workspacePath, pinnedSha, cancellationToken);
-            return new WorkspacePreparationResult(pinnedSha, workspacePath);
+            return new WorkspacePreparationResult(pinnedSha);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -53,7 +53,8 @@ public sealed class WorkspacePreparation(GitProcess git)
         }
     }
 
-    public async Task<WorkspacePreparationResult> ValidateReviewWorkspaceAsync(
+    public async Task ValidateReviewWorkspaceAsync(
+        string candidateSha,
         string workspacePath,
         CancellationToken cancellationToken
     )
@@ -76,12 +77,26 @@ public sealed class WorkspacePreparation(GitProcess git)
         }
 
         var head = await git.RunAsync(workspacePath, ["rev-parse", "HEAD"], cancellationToken);
-        if (head.TimedOut || head.ExitCode != 0)
+        if (
+            head.TimedOut
+            || head.ExitCode != 0
+            || !string.Equals(head.Stdout.Trim(), candidateSha, StringComparison.OrdinalIgnoreCase)
+        )
         {
-            throw new WorkspacePreparationException("Resume workspace HEAD could not be read.");
+            throw new WorkspacePreparationException(
+                $"Resume workspace HEAD must equal captured candidate '{candidateSha}'."
+            );
         }
 
-        return new WorkspacePreparationResult(head.Stdout.Trim(), workspacePath);
+        var status = await git.RunAsync(
+            workspacePath,
+            ["status", "--porcelain"],
+            cancellationToken
+        );
+        if (status.TimedOut || status.ExitCode != 0 || !string.IsNullOrEmpty(status.Stdout))
+        {
+            throw new WorkspacePreparationException("Resume review workspace must be clean.");
+        }
     }
 
     public async Task<WorkspacePreparationResult> ValidateExistingAsync(
@@ -100,10 +115,15 @@ public sealed class WorkspacePreparation(GitProcess git)
         {
             throw new WorkspacePreparationException("Resume workspace HEAD could not be read.");
         }
-        if (!string.Equals(head.Stdout.Trim(), pinnedBaseSha, StringComparison.Ordinal))
+        var ancestry = await git.RunAsync(
+            workspacePath,
+            ["merge-base", "--is-ancestor", pinnedBaseSha, head.Stdout.Trim()],
+            cancellationToken
+        );
+        if (ancestry.TimedOut || ancestry.ExitCode != 0)
         {
             throw new WorkspacePreparationException(
-                $"Resume workspace HEAD '{head.Stdout.Trim()}' does not match pinned base '{pinnedBaseSha}'."
+                $"Resume workspace HEAD '{head.Stdout.Trim()}' does not descend from pinned base '{pinnedBaseSha}'."
             );
         }
 
@@ -119,7 +139,7 @@ public sealed class WorkspacePreparation(GitProcess git)
             );
         }
 
-        return new WorkspacePreparationResult(pinnedBaseSha, workspacePath);
+        return new WorkspacePreparationResult(pinnedBaseSha);
     }
 
     private async Task<string> PinBaseAsync(Packet packet, CancellationToken ct)

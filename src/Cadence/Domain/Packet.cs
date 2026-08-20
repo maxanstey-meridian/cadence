@@ -10,12 +10,14 @@ public sealed record PacketAcceptanceCriterion(
     string Requirement
 );
 
+public sealed record VerificationCommand(string Label, string Command);
+
 public sealed record Packet(
     string Title,
     string Repository,
     string Base,
     IReadOnlyList<PacketOutcome> Outcomes,
-    IReadOnlyList<string> Verification,
+    IReadOnlyList<VerificationCommand> Verification,
     IReadOnlyList<string> Constraints,
     string ImplementationContext = "",
     IReadOnlyList<string>? Commands = null,
@@ -23,5 +25,7 @@ public sealed record Packet(
 )
 {
     public IReadOnlyList<string> Commands { get; init; } = Commands ?? [];
+
+    [JsonRequired]
     public IReadOnlyList<PacketAcceptanceCriterion> Acceptance { get; init; } = Acceptance ?? [];
 }

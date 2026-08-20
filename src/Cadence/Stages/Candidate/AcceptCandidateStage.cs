@@ -3,46 +3,17 @@ using Cadence.Git;
 namespace Cadence;
 
 [PipelineStage(CadenceIds.AcceptCandidate)]
-public sealed partial class AcceptCandidateStage(ReviewerDoctrine reviewerDoctrine, GitProcess git)
+public sealed partial class AcceptCandidateStage(GitProcess git)
 {
     public async ValueTask<Outcome<CadenceState>> ExecuteAsync(
         CadenceState state,
         CancellationToken cancellationToken
     )
     {
-        var reviewIsStructurallyComplete =
-            state.ReviewerDecision is { } review
-            && new ReviewDecisionValidator(
-                reviewerDoctrine,
-                state.Packet.Outcomes.Select(outcome => outcome.Id),
-                state.Constraints,
-                state.VerificationResults,
-                state.Packet.Acceptance.Select(criterion => criterion.Id)
-            )
-                .Validate(review)
-                .IsValid;
         if (
-            !reviewIsStructurallyComplete
-            || state.CandidateSha is not { } candidateSha
+            state.CandidateSha is not { } candidateSha
             || state.ReviewerDecision?.Decision != ReviewDecisionValue.Accept
-            || !string.Equals(
-                state.ReviewerCandidateSha,
-                candidateSha,
-                StringComparison.OrdinalIgnoreCase
-            )
-            || !string.Equals(
-                state.VerifiedCandidateSha,
-                candidateSha,
-                StringComparison.OrdinalIgnoreCase
-            )
-            || state.VerificationIndex != state.Packet.Verification.Count
-            || state.VerificationResults.Count != state.Packet.Verification.Count
-            || state.VerificationResults.Any(result => result.ExitCode != 0)
-            || !string.Equals(
-                state.ReviewerDecision.DoctrineHash,
-                reviewerDoctrine.Sha256,
-                StringComparison.Ordinal
-            )
+            || !state.HasCompleteSuccessfulVerification
         )
         {
             throw new InvalidOperationException(

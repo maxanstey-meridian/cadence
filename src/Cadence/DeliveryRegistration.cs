@@ -8,14 +8,14 @@ namespace Cadence;
 public sealed record CadenceAgentProfile(
     int ContextWindowTokens,
     int MaxOutputTokens,
-    int CheckpointAtPercent
+    int CheckpointAtPercent,
+    bool DisableCompaction = false
 );
 
 public sealed record CadenceOptions(
     Func<string, IChatClient> ChatClients,
     Func<string, CadenceAgentProfile> Profiles,
     ReviewerDoctrine ReviewerDoctrine,
-    TimeProvider? TimeProvider = null,
     TimeSpan? GitTimeout = null,
     IReadOnlyList<AgentSkill>? Skills = null
 );
@@ -27,15 +27,8 @@ public static class CadenceRegistration
         CadenceOptions options
     )
     {
-        services.AddSingleton(options.TimeProvider ?? TimeProvider.System);
         services.TryAddSingleton(_ => new GitProcess(timeout: options.GitTimeout));
-        services.AddSingleton<DirtyWorkCheckpointPolicy>();
-        services.AddSingleton(sp =>
-            CadenceCapabilities.Create(
-                sp.GetRequiredService<TimeProvider>(),
-                sp.GetRequiredService<DirtyWorkCheckpointPolicy>()
-            )
-        );
+        services.AddSingleton(_ => CadenceCapabilities.Create());
         services.AddSingleton<WorkspacePreparation>();
         var skills = (options.Skills ?? []).ToArray();
         services.AddSingleton<CadenceParticipantsFactory>(sp =>
@@ -48,9 +41,7 @@ public static class CadenceRegistration
                 skills,
                 sp.GetRequiredService<WorkspacePreparation>(),
                 sp.GetRequiredService<GitProcess>(),
-                sp.GetRequiredService<DirtyWorkCheckpointPolicy>(),
                 capabilities.AskPlanner,
-                capabilities.UpdateOutcomes,
                 capabilities.SubmitReport,
                 capabilities.WriteCheckpoint
             );

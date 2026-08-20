@@ -29,14 +29,9 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
         return new CadenceAgentProfile(
             profile.ContextWindowTokens,
             profile.MaxOutputTokens,
-            profile.CheckpointAtPercent
+            profile.CheckpointAtPercent,
+            profile.DisableCompaction
         );
-    }
-
-    public string Describe(string profileName)
-    {
-        var profile = GetProfile(profileName);
-        return $"{profile.Provider}/{profile.Model}";
     }
 
     private IChatClient Create(string profileName)

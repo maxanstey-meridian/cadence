@@ -1,8 +1,3 @@
 namespace Cadence;
 
-public sealed record PublicationResultRecord(
-    string Repository,
-    string Branch,
-    string CandidateSha,
-    bool Reconciled
-);
+public sealed record PublicationResultRecord(string Repository, string Branch, string CandidateSha);

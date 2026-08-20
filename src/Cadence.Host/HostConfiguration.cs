@@ -111,5 +111,6 @@ internal sealed record ProfileConfiguration(
     int ContextWindowTokens,
     int MaxOutputTokens,
     int CheckpointAtPercent,
-    string? ReasoningEffort = null
+    string? ReasoningEffort = null,
+    bool DisableCompaction = false
 );

@@ -12,7 +12,8 @@ acceptance:
 commands:
   - task format
 verification:
-  - task check
+  - label: check
+    command: task check
 constraints:
   - Preserve packet field and authored command order
 ---

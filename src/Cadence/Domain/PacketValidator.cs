@@ -116,8 +116,15 @@ public sealed class PacketValidator : AbstractValidator<Packet>
         RuleFor(packet => packet.Verification)
             .Cascade(CascadeMode.Stop)
             .NotEmpty()
-            .Must(commands => commands.All(command => !string.IsNullOrWhiteSpace(command)))
-            .WithMessage("Packet must declare at least one non-blank verification command.");
+            .Must(commands =>
+                commands.All(command =>
+                    !string.IsNullOrWhiteSpace(command.Label)
+                    && !string.IsNullOrWhiteSpace(command.Command)
+                )
+            )
+            .WithMessage(
+                "Packet must declare at least one verification entry with non-blank label and command."
+            );
         RuleForEach(packet => packet.Commands)
             .Must(BeNonBlank)
             .WithMessage("Packet commands must not contain null or blank values.");

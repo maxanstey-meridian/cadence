@@ -24,14 +24,6 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
         RuleFor(decision => decision.Constraints)
             .NotNull()
             .WithErrorCode("planner.constraints.required");
-        RuleFor(decision => decision.Constraints)
-            .Empty()
-            .WithErrorCode("planner.constraints.forbidden_for_proceed")
-            .When(decision => decision.Decision == PlannerDecisionValue.Proceed);
-        RuleFor(decision => decision.Constraints)
-            .NotEmpty()
-            .WithErrorCode("planner.constraints.required")
-            .When(decision => decision.Decision == PlannerDecisionValue.ProceedWithConstraints);
         RuleForEach(decision => decision.Constraints)
             .Must(BeMeaningful)
             .WithErrorCode("planner.constraints.meaningful");
@@ -50,18 +42,11 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
         RuleFor(decision => decision.CorrectedApproach)
             .Must(BeMeaningful)
             .WithErrorCode("planner.corrected_approach.required")
-            .When(decision =>
-                decision.Decision
-                    is PlannerDecisionValue.ReviseApproach
-                        or PlannerDecisionValue.Reorient
-            );
+            .When(decision => decision.Decision == PlannerDecisionValue.ReviseApproach);
         RuleFor(decision => decision.CorrectedApproach)
             .Null()
             .WithErrorCode("planner.corrected_approach.forbidden")
-            .When(decision =>
-                decision.Decision
-                    is not (PlannerDecisionValue.ReviseApproach or PlannerDecisionValue.Reorient)
-            );
+            .When(decision => decision.Decision != PlannerDecisionValue.ReviseApproach);
         RuleFor(decision => decision.HumanQuestion)
             .NotEmpty()
             .WithErrorCode("planner.human_question.required")

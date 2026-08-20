@@ -16,6 +16,35 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
             : state.Packet.Title;
         var addResult = await git.RunAsync(state.WorkspacePath, ["add", "-A"], cancellationToken);
         EnsureSucceeded("git add", addResult, cancellationToken);
+        var stagedTree = await git.RunAsync(state.WorkspacePath, ["write-tree"], cancellationToken);
+        EnsureSucceeded("git write-tree", stagedTree, cancellationToken);
+        var headTree = await git.RunAsync(
+            state.WorkspacePath,
+            ["rev-parse", "HEAD^{tree}"],
+            cancellationToken
+        );
+        EnsureSucceeded("git rev-parse HEAD^{tree}", headTree, cancellationToken);
+        var treeUnchanged = string.Equals(
+            stagedTree.Stdout.Trim(),
+            headTree.Stdout.Trim(),
+            StringComparison.OrdinalIgnoreCase
+        );
+        if (treeUnchanged && state.ActiveReviewFindings.Count > 0)
+        {
+            return new Outcome<CadenceState>.Success(
+                state with
+                {
+                    CandidateSha = null,
+                    VerificationIndex = 0,
+                    VerificationResults = [],
+                    ReviewerDecision = null,
+                    AcceptedCandidateSha = null,
+                    ExecutorTransition = new ExecutorTransition.CandidateUnchanged(
+                        "The submitted report did not change the repository tree. Make a concrete repository repair before submitting another report; claims, outcome updates, verification, or a different empty commit do not qualify."
+                    ),
+                }
+            );
+        }
         var commitResult = await git.RunAsync(
             state.WorkspacePath,
             [
@@ -24,7 +53,7 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
                 "-c",
                 "user.email=cadence@localhost",
                 "commit",
-                "--allow-empty",
+                .. treeUnchanged ? new[] { "--allow-empty" } : Array.Empty<string>(),
                 "-m",
                 commitMessage,
             ],
@@ -44,9 +73,7 @@ public sealed partial class CaptureCandidateStage(GitProcess git)
                 CandidateSha = candidateSha,
                 VerificationIndex = 0,
                 VerificationResults = [],
-                VerifiedCandidateSha = null,
                 ReviewerDecision = null,
-                ReviewerCandidateSha = null,
                 AcceptedCandidateSha = null,
             }
         );

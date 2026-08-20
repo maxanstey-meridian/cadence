@@ -22,14 +22,13 @@ internal static class ReviewerAgent
                                 "ls",
                                 "grep",
                                 "git:ro",
-                                agents.ReviewerGitNexus
+                                agents.ReviewerWorkspace.Commands
                             ),
-                            AgentTools.Always<CadenceState>(agents.ReviewerWorkspace.Commands),
                         ]
                     )
-                    .WithMessage(state => ReviewerPrompts.BuildMessage(state, doctrine))
+                    .WithMessage(ReviewerPrompts.BuildMessage)
                     .WithOutput(
-                        new ReviewDecisionOutput(doctrine),
+                        new ReviewDecisionOutput(),
                         (state, decision) => state.RecordReviewDecision(decision)
                     )
                     .RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded())

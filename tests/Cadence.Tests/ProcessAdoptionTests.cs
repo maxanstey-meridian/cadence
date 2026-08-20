@@ -147,17 +147,17 @@ public sealed class ProcessAdoptionTests
     }
 
     [Fact]
-    public async Task Verification_truncation_is_a_failed_result_with_deterministic_evidence()
+    public async Task Verification_truncation_preserves_success_with_incomplete_evidence()
     {
         var result = await RunVerificationAsync(
             "printf 'output-longer-than-bound'",
             outputBound: 8
         );
 
-        result.ExitCode.Should().Be(-1);
+        result.ExitCode.Should().Be(0);
         result.TimedOut.Should().BeFalse();
         result.Stdout.Should().Be("output-l");
-        result.Stderr.Should().Contain("complete-output capture limit");
+        result.Stderr.Should().Contain("output was truncated at the capture limit");
     }
 
     private static async Task<VerificationResult> RunVerificationAsync(
@@ -173,7 +173,7 @@ public sealed class ProcessAdoptionTests
             var packet = TestSupport.Packet() with
             {
                 Repository = repository,
-                Verification = [command],
+                Verification = [new VerificationCommand("test", command)],
             };
             var stage = new VerificationStage(
                 new VerificationOperation(new GitProcess(), timeout, outputBound)

@@ -11,9 +11,7 @@ public sealed class CadenceParticipantsFactory(
     IReadOnlyList<AgentSkill> skills,
     WorkspacePreparation workspacePreparation,
     GitProcess git,
-    DirtyWorkCheckpointPolicy dirtyWorkCheckpoint,
     AgentCapability<CadenceState> askPlanner,
-    AgentCapability<CadenceState> updateOutcomes,
     AgentCapability<CadenceState> submitReport,
     AgentCapability<CadenceState> writeCheckpoint
 )
@@ -26,14 +24,6 @@ public sealed class CadenceParticipantsFactory(
                 state.MutationAuthorized
                     ?
                     [
-                        .. state.Packet.Verification.Select(
-                            (command, index) =>
-                                AgentCommand.Define(
-                                    $"run_verification_{index + 1}",
-                                    $"Run verification command {index + 1}: {command}",
-                                    command
-                                )
-                        ),
                         .. state.Packet.Commands.Select(
                             (command, index) =>
                                 AgentCommand.Define(
@@ -47,17 +37,7 @@ public sealed class CadenceParticipantsFactory(
         );
         var reviewerWorkspace = AgentWorkspace<CadenceState>.Define(
             state => state.WorkspacePath,
-            state =>
-                state
-                    .Packet.Verification.Select(
-                        (command, index) =>
-                            AgentCommand.Define(
-                                $"run_verification_{index + 1}",
-                                $"Run verification command {index + 1}: {command}",
-                                command
-                            )
-                    )
-                    .ToArray()
+            _ => []
         );
         var agents = new CadenceAgentFactory(
             chatClients,
@@ -68,20 +48,13 @@ public sealed class CadenceParticipantsFactory(
         );
         return new CadenceParticipants(
             new PrepareWorkspaceStage(workspacePreparation),
-            ExecutorAgent.Create(
-                agents,
-                askPlanner,
-                updateOutcomes,
-                submitReport,
-                writeCheckpoint,
-                dirtyWorkCheckpoint
-            ),
+            ExecutorAgent.Create(agents, askPlanner, submitReport, writeCheckpoint),
             PlannerAgent.Create(agents),
             new PlannerFailureStage().Definition,
             new CaptureCandidateStage(git),
             new VerificationStage(new VerificationOperation(git)),
             ReviewerAgent.Create(agents, reviewerDoctrine),
-            new AcceptCandidateStage(reviewerDoctrine, git),
+            new AcceptCandidateStage(git),
             PipelineNodes.Complete(new RunReady()),
             PipelineNodes.Failed(new RunFailed()),
             PipelineNodes.Failed(new PlannerUnavailable()),

@@ -3,7 +3,7 @@ using Cadence.Git;
 
 namespace Cadence;
 
-public sealed class PublicationOperation(GitProcess git, string reviewerDoctrineHash)
+public sealed class PublicationOperation(GitProcess git)
 {
     public async ValueTask<PublicationResultRecord> ExecuteAsync(
         CadenceState state,
@@ -18,18 +18,6 @@ public sealed class PublicationOperation(GitProcess git, string reviewerDoctrine
         {
             throw new InvalidOperationException(
                 "The accepted publication candidate no longer matches the current candidate."
-            );
-        }
-        if (
-            !string.Equals(
-                state.ReviewerDecision?.DoctrineHash,
-                reviewerDoctrineHash,
-                StringComparison.Ordinal
-            )
-        )
-        {
-            throw new InvalidOperationException(
-                "The current Reviewer doctrine does not match the accepted review."
             );
         }
         var branch = string.IsNullOrWhiteSpace(explicitBranch)
@@ -110,12 +98,7 @@ public sealed class PublicationOperation(GitProcess git, string reviewerDoctrine
                 $"Branch '{branch}' resolves to '{publishedSha}', not candidate '{candidateSha}'."
             );
         }
-        var result = new PublicationResultRecord(
-            repository,
-            branch,
-            candidateSha,
-            Reconciled: true
-        );
+        var result = new PublicationResultRecord(repository, branch, candidateSha);
         return result;
     }
 

@@ -66,23 +66,6 @@ public sealed class PublicationTests
     }
 
     [Fact]
-    public async Task Publication_refuses_candidate_reviewed_under_another_doctrine()
-    {
-        var state = AcceptedState("/repository", "/workspace", "base", "1234567890abcdef");
-
-        var act = async () =>
-            await new PublicationOperation(new GitProcess(), "different-doctrine").ExecuteAsync(
-                state,
-                "cadence/feature",
-                TestContext.Current.CancellationToken
-            );
-
-        await act.Should()
-            .ThrowAsync<InvalidOperationException>()
-            .WithMessage("*doctrine does not match*");
-    }
-
-    [Fact]
     public async Task Publishing_the_same_candidate_twice_reconciles_idempotently()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -115,7 +98,7 @@ public sealed class PublicationTests
             first.CandidateSha.Should().Be(candidateSha);
             TestSupport.Git(repository, "rev-parse", "--verify", "refs/heads/cadence/feature");
             TestSupport.Head(repository).Should().Be(sourceHead);
-            first.Reconciled.Should().BeTrue();
+            first.CandidateSha.Should().Be(candidateSha);
         }
         finally
         {
@@ -127,24 +110,12 @@ public sealed class PublicationTests
         }
     }
 
-    private static ReviewOutcomeAssessment Assessment() =>
-        new("outcome-1", true, [TestSupport.FileEvidence()]);
-
-    private static PublicationOperation Operation() =>
-        new(new GitProcess(), TestSupport.Doctrine().Sha256);
+    private static PublicationOperation Operation() => new(new GitProcess());
 
     private static VerificationResult Verification() =>
-        new(0, "test", 0, "passed", "", TimeSpan.Zero, false);
+        new(0, "test", "test", 0, "passed", "", TimeSpan.Zero, false);
 
-    private static ReviewDecision Decision() =>
-        new(
-            ReviewDecisionValue.Accept,
-            TestSupport.Doctrine().Sha256,
-            "Accepted",
-            [Assessment()],
-            [],
-            []
-        );
+    private static ReviewDecision Decision() => new(ReviewDecisionValue.Accept, "Accepted", []);
 
     private static CadenceState AcceptedState(
         string repository,
@@ -158,10 +129,8 @@ public sealed class PublicationTests
             WorkspacePath = workspace,
             PinnedBaseSha = baseSha,
             CandidateSha = candidateSha,
-            VerifiedCandidateSha = candidateSha,
             VerificationIndex = 1,
             VerificationResults = [Verification()],
-            ReviewerCandidateSha = candidateSha,
             ReviewerDecision = Decision(),
             AcceptedCandidateSha = candidateSha,
         };

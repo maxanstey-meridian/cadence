@@ -2,61 +2,29 @@ namespace Cadence;
 
 internal static class CadenceCapabilities
 {
-    internal static CadenceCapabilitySet Create(
-        TimeProvider timeProvider,
-        DirtyWorkCheckpointPolicy dirtyWorkCheckpoint
-    )
+    internal static CadenceCapabilitySet Create()
     {
         var askPlanner = AgentCapabilities.Create<CadenceState, AskPlannerRequest>(
             new AskPlannerCapability(),
-            (state, request) =>
-            {
-                dirtyWorkCheckpoint.MarkContinuity(state.WorkspacePath);
-                return state.RecordPlannerRequest(request, timeProvider.GetUtcNow());
-            }
+            (state, request) => state.RecordPlannerRequest(request)
         );
         var submitReport = AgentCapabilities.Create<CadenceState, SubmitReportRequest>(
-            new SubmitReportCapability(dirtyWorkCheckpoint),
+            new SubmitReportCapability(),
             (state, request) => state.RecordImplementationReport(request)
-        );
-        var updateOutcomes = AgentCapabilities.Create<CadenceState, UpdateOutcomesRequest>(
-            new UpdateOutcomesCapability(),
-            (state, request) => state.RecordOutcomeUpdates(request)
         );
         var writeCheckpoint = AgentCapabilities.Create<CadenceState, WriteCheckpointRequest>(
             new WriteCheckpointCapability(),
-            (state, request) =>
-            {
-                dirtyWorkCheckpoint.MarkContinuity(state.WorkspacePath);
-                return state.RecordCheckpoint(request, timeProvider.GetUtcNow());
-            }
+            (state, request) => state.RecordCheckpoint(request)
         );
-        return new CadenceCapabilitySet(askPlanner, updateOutcomes, submitReport, writeCheckpoint);
+        return new CadenceCapabilitySet(askPlanner, submitReport, writeCheckpoint);
     }
 }
 
 internal sealed record CadenceCapabilitySet(
     AgentCapability<CadenceState> AskPlanner,
-    AgentCapability<CadenceState> UpdateOutcomes,
     AgentCapability<CadenceState> SubmitReport,
     AgentCapability<CadenceState> WriteCheckpoint
 );
-
-internal sealed class UpdateOutcomesCapability
-    : IAgentCapabilityDefinition<CadenceState, UpdateOutcomesRequest>
-{
-    public string ToolName => "update_outcomes";
-    public string Instructions =>
-        "Atomically update one or more entries in the authoritative outcome ledger and end the current turn.";
-    public FluentValidation.IValidator<UpdateOutcomesRequest> Validator { get; } =
-        new UpdateOutcomesRequestValidator();
-
-    public FluentValidation.IValidator<UpdateOutcomesRequest>? ValidatorFor(CadenceState state) =>
-        new UpdateOutcomesRequestValidator(state);
-
-    public string Summarize(UpdateOutcomesRequest request) =>
-        $"Outcome ledger updated: {string.Join(", ", request.Updates.Select(update => update.OutcomeId))}";
-}
 
 internal sealed class AskPlannerCapability
     : IAgentCapabilityDefinition<CadenceState, AskPlannerRequest>
@@ -70,19 +38,13 @@ internal sealed class AskPlannerCapability
     public string Summarize(AskPlannerRequest request) => $"Planner asked: {request.Question}";
 }
 
-internal sealed class SubmitReportCapability(DirtyWorkCheckpointPolicy dirtyWorkCheckpoint)
+internal sealed class SubmitReportCapability
     : IAgentCapabilityDefinition<CadenceState, SubmitReportRequest>
 {
     public string ToolName => "submit_report";
     public string Instructions => "Submit the implementation report and end the current turn.";
     public FluentValidation.IValidator<SubmitReportRequest> Validator { get; } =
         new SubmitReportRequestValidator();
-
-    public FluentValidation.IValidator<SubmitReportRequest>? ValidatorFor(CadenceState state) =>
-        new SubmitReportRequestValidator(
-            state,
-            dirtyWorkCheckpoint.IsRequired(state.WorkspacePath)
-        );
 
     public string Summarize(SubmitReportRequest request) => $"Report submitted: {request.Summary}";
 }

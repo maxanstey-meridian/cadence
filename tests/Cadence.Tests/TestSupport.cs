@@ -11,30 +11,19 @@ internal static class TestSupport
 
     internal static ReviewerDoctrine Doctrine() => _doctrineValue.Value;
 
-    internal static ReviewEvidenceReference FileEvidence(string path = "README.md", int line = 1) =>
-        new(ReviewEvidenceKind.FileLine, Path: path, Line: line);
-
-    internal static ReviewEvidenceReference DoctrineEvidence() =>
-        new(ReviewEvidenceKind.DoctrineClause, DoctrineClause: "Correctness over taste.");
-
     internal static Packet Packet() =>
         new(
             "Implement feature",
             "/source",
             "main",
             [new PacketOutcome("outcome-1", "Deliver the feature")],
-            ["dotnet test"],
+            [new VerificationCommand("test", "dotnet test")],
             [],
             "Inspect the implementation."
         );
 
-    internal static CadenceState State(string? workspace = null, DateTimeOffset? now = null) =>
-        CadenceState.Create(
-            Packet(),
-            "base-sha",
-            workspace ?? "/workspace",
-            now is null ? TimeProvider.System : new FakeTimeProvider(now.Value)
-        );
+    internal static CadenceState State(string? workspace = null) =>
+        CadenceState.Create(Packet(), "base-sha", workspace ?? "/workspace");
 
     internal static string CreateGitRepository()
     {
@@ -51,10 +40,17 @@ internal static class TestSupport
 
     private static ReviewerDoctrine CreateDoctrine()
     {
-        var path = Path.Combine(Path.GetTempPath(), "cadence-tests-reviewer-doctrine.md");
+        var path = Path.Combine(Path.GetTempPath(), "cadence-tests-reviewer-doctrine.json");
         File.WriteAllText(
             path,
-            "Correctness over taste.\nPreserve behavior and test real integration.\n"
+            """
+            {
+                          "clauses": [
+                { "id": "correctness", "text": "Correctness over taste." },
+                { "id": "real-integration", "text": "Preserve behavior and test real integration." }
+              ]
+            }
+            """
         );
         return ReviewerDoctrine.Load(path);
     }

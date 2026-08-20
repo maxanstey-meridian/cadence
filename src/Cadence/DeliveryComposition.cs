@@ -33,14 +33,51 @@ public sealed class CadenceComposition
             .Persist()
             .Route(
                 on: cadence.PrepareWorkspace.Success,
-                when: state =>
-                    state.ExecutorTransition
-                        is ExecutorTransition.PlannerRequested
-                        {
-                            Request.QuestionType: PlannerQuestionType.SessionReliability,
-                        },
+                when: IsPendingReviewerHumanRecovery,
+                to: cadence.ReviewerHumanInput,
+                label: "reviewer human recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: IsReviewerHumanDecision,
+                to: cadence.Reviewer,
+                label: "reviewer human decision recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: ShouldContinueRepairs,
                 to: cadence.Planner,
-                label: "workspace recovered"
+                label: "human continued repairs recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: ShouldStopAfterReviewCap,
+                to: cadence.FailRun,
+                label: "human stopped repairs recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: IsAcceptedReviewRecovery,
+                to: cadence.AcceptCandidate,
+                label: "accepted review recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: IsReviewRepairRecovery,
+                to: cadence.Planner,
+                label: "review repair recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: IsVerificationRecovery,
+                to: cadence.Verification,
+                label: "verification recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
+                when: state => state.CandidateSha is null && state.ExecutorTransition is not null,
+                to: cadence.Planner,
+                label: "retained workspace validated"
             )
             .Route(
                 on: cadence.PrepareWorkspace.Success,
@@ -50,8 +87,8 @@ public sealed class CadenceComposition
             )
             .Route(
                 on: cadence.PrepareWorkspace.Success,
-                when: state => state.ExecutorTransition is null,
-                to: cadence.Executor,
+                when: state => state.CandidateSha is null && state.ExecutorTransition is null,
+                to: cadence.Planner,
                 label: "workspace prepared"
             )
             .Route(
@@ -64,12 +101,6 @@ public sealed class CadenceComposition
                 when: state => state.ExecutorTransition is ExecutorTransition.PlannerRequested,
                 to: cadence.Planner,
                 label: "planner requested"
-            )
-            .Route(
-                on: cadence.Executor.Success,
-                when: state => state.ExecutorTransition is ExecutorTransition.OutcomeLedgerUpdated,
-                to: cadence.Executor,
-                label: "outcome ledger updated"
             )
             .Route(
                 on: cadence.Executor.Success,
@@ -123,6 +154,13 @@ public sealed class CadenceComposition
             )
             .Route(
                 on: cadence.CaptureCandidate.Success,
+                when: state => state.CandidateSha is null,
+                to: cadence.Executor,
+                label: "candidate unchanged"
+            )
+            .Route(
+                on: cadence.CaptureCandidate.Success,
+                when: state => state.CandidateSha is not null,
                 to: cadence.Verification,
                 label: "candidate captured"
             )
@@ -208,10 +246,24 @@ public sealed class CadenceComposition
     private static bool LatestCommandPassed(CadenceState state) =>
         state.VerificationResults.LastOrDefault()?.ExitCode == 0;
 
-    private static bool IsReviewRecovery(CadenceState state) =>
+    internal static bool IsReviewRepairRecovery(CadenceState state) =>
         state.CandidateSha is not null
-        && state.VerificationResults.Count > 0
-        && state.ReviewerDecision is null;
+        && state.ReviewerDecision?.Decision == ReviewDecisionValue.RequestChanges
+        && state.ReviewAttempt < state.MaximumReviewAttempts;
+
+    internal static bool IsVerificationRecovery(CadenceState state) =>
+        state.CandidateSha is not null
+        && state.ReviewerDecision is null
+        && !state.HasCompleteSuccessfulVerification;
+
+    internal static bool IsReviewRecovery(CadenceState state) =>
+        state.CandidateSha is not null
+        && state.ReviewerDecision is null
+        && state.HasCompleteSuccessfulVerification;
+
+    private static bool IsAcceptedReviewRecovery(CadenceState state) =>
+        state.CandidateSha is not null
+        && state.ReviewerDecision?.Decision == ReviewDecisionValue.Accept;
 
     private static bool LatestCommandFailed(CadenceState state) =>
         state.VerificationResults.LastOrDefault()?.ExitCode is not (null or 0);
@@ -223,17 +275,13 @@ public sealed class CadenceComposition
         LatestCommandPassed(state) && state.VerificationIndex >= state.Packet.Verification.Count;
 
     private static bool IsPlannerProceed(CadenceState state) =>
-        state.PlannerDecision?.Decision
-            is PlannerDecisionValue.Proceed
-                or PlannerDecisionValue.ProceedWithConstraints;
+        state.PlannerDecision?.Decision == PlannerDecisionValue.Proceed;
 
     private static bool IsPlannerNeedsHuman(CadenceState state) =>
         state.PlannerDecision?.Decision == PlannerDecisionValue.NeedsHuman;
 
     private static bool IsPlannerRevision(CadenceState state) =>
-        state.PlannerDecision?.Decision
-            is PlannerDecisionValue.ReviseApproach
-                or PlannerDecisionValue.Reorient;
+        state.PlannerDecision?.Decision == PlannerDecisionValue.ReviseApproach;
 
     private static bool IsPlannerStop(CadenceState state) =>
         state.PlannerDecision?.Decision == PlannerDecisionValue.Stop;
@@ -250,12 +298,15 @@ public sealed class CadenceComposition
         || state.ReviewerDecision?.Decision == ReviewDecisionValue.RequestChanges
             && state.ReviewAttempt >= state.MaximumReviewAttempts;
 
-    private static bool IsReviewerHumanDecision(CadenceState state) =>
-        state.ReviewerHumanResolution == ReviewerHumanResolution.HumanDecision;
+    internal static bool IsPendingReviewerHumanRecovery(CadenceState state) =>
+        IsReviewNeedsHuman(state) && state.ReviewerHumanAnswer is null;
 
-    private static bool ShouldContinueRepairs(CadenceState state) =>
-        state.ReviewerHumanResolution == ReviewerHumanResolution.ContinueRepairs;
+    internal static bool IsReviewerHumanDecision(CadenceState state) =>
+        state.ReviewerHumanAnswer is ReviewerHumanAnswer.HumanDecision;
 
-    private static bool ShouldStopAfterReviewCap(CadenceState state) =>
-        state.ReviewerHumanResolution == ReviewerHumanResolution.Stop;
+    internal static bool ShouldContinueRepairs(CadenceState state) =>
+        state.ReviewerHumanAnswer is ReviewerHumanAnswer.ContinueRepairs;
+
+    internal static bool ShouldStopAfterReviewCap(CadenceState state) =>
+        state.ReviewerHumanAnswer is ReviewerHumanAnswer.Stop;
 }

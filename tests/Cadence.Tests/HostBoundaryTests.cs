@@ -90,27 +90,31 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Host_configuration_resolves_and_loads_required_reviewer_doctrine_once_from_config_directory()
+    public void Host_configuration_resolves_and_loads_typed_reviewer_doctrine()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-config-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
         var configPath = Path.Combine(directory, "config.json");
-        var doctrinePath = Path.Combine(directory, "reviewer.md");
+        var doctrinePath = Path.Combine(directory, "reviewer-doctrine.json");
+        const string content =
+            "{\n  \"clauses\": [{ \"id\": \"material-correctness\", \"text\": \"Authored  text.\" }]\n}\n";
         try
         {
-            File.WriteAllText(doctrinePath, "Exact doctrine bytes.\n");
-            File.WriteAllText(configPath, ConfigurationJson("reviewer.md"));
+            File.WriteAllText(doctrinePath, content);
+            File.WriteAllText(configPath, ConfigurationJson("reviewer-doctrine.json"));
 
             var configuration = HostConfiguration.Load(configPath);
             var doctrine = ReviewerDoctrine.Load(
                 configuration.ResolveReviewerDoctrinePath(configPath)
             );
 
-            doctrine.Source.Should().Be(doctrinePath);
-            doctrine.Content.Should().Be("Exact doctrine bytes.\n");
             doctrine
-                .Sha256.Should()
-                .Be("00ebc1df21ec80dc84bb28af0313eecdd9fa8f11e8c548636955efc827f5ebda");
+                .Clauses.Should()
+                .Equal(new ReviewerDoctrineClause("material-correctness", "Authored  text."));
+            ((IList<ReviewerDoctrineClause>)doctrine.Clauses)
+                .Invoking(clauses => clauses.Add(new("other", "text")))
+                .Should()
+                .Throw<NotSupportedException>();
         }
         finally
         {
@@ -142,15 +146,39 @@ public sealed class HostBoundaryTests
     [Fact]
     public void Reviewer_doctrine_rejects_missing_and_blank_files()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"cadence-doctrine-{Guid.NewGuid():N}.md");
+        var path = Path.Combine(Path.GetTempPath(), $"cadence-doctrine-{Guid.NewGuid():N}.json");
         var missing = () => ReviewerDoctrine.Load(path);
-        missing.Should().Throw<InvalidOperationException>().WithMessage("*not found*");
+        missing.Should().Throw<InvalidOperationException>();
 
         File.WriteAllText(path, " \n\t");
         try
         {
             var blank = () => ReviewerDoctrine.Load(path);
-            blank.Should().Throw<InvalidOperationException>().WithMessage("*blank*");
+            blank.Should().Throw<InvalidOperationException>();
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("{}")]
+    [InlineData("{\"extra\":true,\"clauses\":[{\"id\":\"one\",\"text\":\"text\"}]}")]
+    [InlineData("{\"clauses\":[]}")]
+    [InlineData("{\"clauses\":[{\"id\":\" \",\"text\":\"text\"}]}")]
+    [InlineData(
+        "{\"clauses\":[{\"id\":\"same\",\"text\":\"one\"},{\"id\":\"same\",\"text\":\"two\"}]}"
+    )]
+    public void Reviewer_doctrine_rejects_invalid_documents(string content)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"cadence-doctrine-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, content);
+            var act = () => ReviewerDoctrine.Load(path);
+            act.Should().Throw<InvalidOperationException>();
         }
         finally
         {
@@ -304,8 +332,10 @@ public sealed class HostBoundaryTests
                 outcomes:
                   - id: outcome-1
                     description: Deliver behavior
+                acceptance: []
                 verification:
-                  - "{{command}}"
+                  - label: test
+                    command: "{{command}}"
                 ---
                 Implement the behavior.
                 """
@@ -374,8 +404,10 @@ public sealed class HostBoundaryTests
                   - " task generate "
                   - "task contracts"
                 verification:
-                  - " dotnet test "
-                  - "dotnet test"
+                  - label: "test-1"
+                    command: " dotnet test "
+                  - label: "test-2"
+                    command: "dotnet test"
                 constraints:
                   - " Preserve exact text "
                 ---
@@ -407,7 +439,12 @@ public sealed class HostBoundaryTests
                 .Should()
                 .Equal("First scenario", "Second scenario");
             packet.Commands.Should().Equal(" task generate ", "task contracts");
-            packet.Verification.Should().Equal(" dotnet test ", "dotnet test");
+            packet
+                .Verification.Should()
+                .Equal(
+                    new VerificationCommand("test-1", "dotnet test"),
+                    new VerificationCommand("test-2", "dotnet test")
+                );
             packet.Constraints.Should().Equal(" Preserve exact text ");
             packet.ImplementationContext.Should().Be("Inspect first.\nThen implement.");
         }
@@ -483,7 +520,7 @@ public sealed class HostBoundaryTests
         var start = content.IndexOf($"{field}:", StringComparison.Ordinal);
         var end =
             field == "outcomes"
-                ? content.IndexOf("verification:", start, StringComparison.Ordinal)
+                ? content.IndexOf("acceptance:", start, StringComparison.Ordinal)
                 : content.IndexOf("---", start, StringComparison.Ordinal);
         content = content.Remove(start, end - start);
 
@@ -540,7 +577,7 @@ public sealed class HostBoundaryTests
     {
         var repository = TestSupport.CreateGitRepository();
         var content = ValidPacket(repository, "")
-            .Replace("  - dotnet test", "  - true", StringComparison.Ordinal);
+            .Replace("command: dotnet test", "command: true", StringComparison.Ordinal);
 
         try
         {
@@ -549,7 +586,7 @@ public sealed class HostBoundaryTests
             act.Should()
                 .Throw<PacketFileException>()
                 .Which.Problems.Should()
-                .Contain(problem => problem.Path == "$.verification[0]");
+                .Contain(problem => problem.Path == "$.verification[0].command");
         }
         finally
         {
@@ -566,7 +603,7 @@ public sealed class HostBoundaryTests
 
         packet.Repository.Should().Be(root);
         packet.Commands.Should().Equal("task format");
-        packet.Verification.Should().Equal("task check");
+        packet.Verification.Should().Equal(new VerificationCommand("check", "task check"));
         packet.ImplementationContext.Should().Contain("host boundary tests");
     }
 
@@ -634,78 +671,6 @@ public sealed class HostBoundaryTests
     ) => Program.IsResumableStatus(status).Should().Be(resumable);
 
     [Fact]
-    public async Task Resume_target_accepts_a_packet_path_and_selects_the_latest_matching_run()
-    {
-        var home = Path.Combine(Path.GetTempPath(), $"cadence-resume-home-{Guid.NewGuid():N}");
-        var repository = TestSupport.CreateGitRepository();
-        var packetPath = Path.Combine(home, "packet.md");
-        Directory.CreateDirectory(home);
-        File.WriteAllText(packetPath, ValidPacket(repository, ""));
-        var packet = PacketReader.Read(packetPath);
-        var olderRunId = Guid.CreateVersion7();
-        await Task.Delay(2, TestContext.Current.CancellationToken);
-        var newerRunId = Guid.CreateVersion7();
-        try
-        {
-            foreach (var runId in new[] { olderRunId, newerRunId })
-            {
-                var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
-                Directory.CreateDirectory(runDirectory);
-                var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
-                var observer = await store.CreateObserverAsync(
-                    runId,
-                    "cadence",
-                    TestContext.Current.CancellationToken
-                );
-                await observer.ObserveAsync(
-                    new PipelineStepCompleted(
-                        runId,
-                        CadenceIds.Executor,
-                        new PipelineRunOutcome(
-                            OutcomeKinds.CheckpointWritten,
-                            CadenceIds.Executor,
-                            "Checkpoint written.",
-                            JsonSerializer.SerializeToElement(new { }),
-                            TimeSpan.Zero
-                        ),
-                        new PipelineAcceptedValue(
-                            typeof(CadenceState).FullName!,
-                            JsonSerializer.SerializeToElement(
-                                CadenceState.Create(
-                                    packet,
-                                    "base-sha",
-                                    Path.Combine(runDirectory, "workspace")
-                                ),
-                                TandemJson.CreateTypedContract()
-                            )
-                        )
-                    ),
-                    TestContext.Current.CancellationToken
-                );
-                await store.CompleteRunAsync(
-                    runId,
-                    LedgerRunStatus.Faulted,
-                    TestContext.Current.CancellationToken
-                );
-            }
-
-            var target = await Program.ResolveResumeTargetAsync(
-                packetPath,
-                home,
-                TestContext.Current.CancellationToken
-            );
-
-            target.RunId.Should().Be(newerRunId);
-            target.Packet.Should().BeEquivalentTo(packet);
-        }
-        finally
-        {
-            Directory.Delete(repository, recursive: true);
-            Directory.Delete(home, recursive: true);
-        }
-    }
-
-    [Fact]
     public async Task Resume_rejects_a_ledger_bound_to_another_workspace()
     {
         var home = Path.Combine(Path.GetTempPath(), $"cadence-resume-home-{Guid.NewGuid():N}");
@@ -713,8 +678,11 @@ public sealed class HostBoundaryTests
         var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
         var configPath = Path.Combine(home, "config.json");
         Directory.CreateDirectory(runDirectory);
-        File.WriteAllText(Path.Combine(home, "reviewer.md"), "Review doctrine.\n");
-        File.WriteAllText(configPath, ConfigurationJson("reviewer.md"));
+        File.WriteAllText(
+            Path.Combine(home, "reviewer-doctrine.json"),
+            "{\"clauses\":[{\"id\":\"review\",\"text\":\"Review doctrine.\"}]}"
+        );
+        File.WriteAllText(configPath, ConfigurationJson("reviewer-doctrine.json"));
         try
         {
             var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
@@ -775,7 +743,8 @@ public sealed class HostBoundaryTests
                 outcome: outcome-1
                 requirement: A concrete scenario proves delivery
             verification:
-              - dotnet test
+              - label: test
+                command: dotnet test
             {{extra}}
             ---
             Body

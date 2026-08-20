@@ -19,7 +19,6 @@ internal static class PlannerAgent
                                 "ls",
                                 "grep",
                                 "git:ro",
-                                agents.ReviewerGitNexus,
                                 "web_search",
                                 "web_fetch"
                             ),
@@ -30,7 +29,6 @@ internal static class PlannerAgent
                         new PlannerDecisionOutput(),
                         (state, decision) => state.RecordPlannerDecision(decision)
                     )
-                    .RequireOutputAcceptance(PlannerPolicies.RepositoryGrounded())
                     .ContinueSession()
         );
 }

@@ -10,7 +10,8 @@ outcomes:
   - id: regression-coverage
     description: Automated tests cover source locations for top-level and nested validation failures
 verification:
-  - task check
+  - label: check
+    command: task check
 constraints:
   - Keep the change within the optional @tandem/packets package and its tests
   - Derive locations from the parsed YAML document rather than reparsing or searching source text

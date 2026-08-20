@@ -4,7 +4,7 @@ namespace Cadence;
 
 public static class ReviewerPrompts
 {
-    public static string BuildMessage(CadenceState state, ReviewerDoctrine doctrine)
+    public static string BuildMessage(CadenceState state)
     {
         var outcomes = string.Join(
             "\n",
@@ -28,61 +28,11 @@ public static class ReviewerPrompts
             state.VerificationResults.Count > 0
                 ? VerificationResultFormatting.Format(state.VerificationResults)
                 : "(no verification commands)";
-        var verificationEvidence = state.VerificationResults.Select(
-            result => new ReviewEvidenceReference(
-                ReviewEvidenceKind.VerificationCommand,
-                Command: result.Command,
-                ExitCode: result.ExitCode,
-                Stdout: result.Stdout,
-                Stderr: result.Stderr
-            )
-        );
         var example = JsonSerializer.Serialize(
             new
             {
                 decision = "Accept",
-                doctrineHash = doctrine.Sha256,
-                summary = "Every packet outcome is implemented and supported by reproducible evidence.",
-                outcomes = state.Packet.Outcomes.Select(outcome => new ReviewOutcomeAssessment(
-                    outcome.Id,
-                    true,
-                    [
-                        new ReviewEvidenceReference(
-                            ReviewEvidenceKind.PacketOutcome,
-                            OutcomeId: outcome.Id
-                        ),
-                        .. verificationEvidence,
-                    ]
-                )),
-                acceptanceAssessments = state.Packet.Acceptance.Select(
-                    criterion => new ReviewAcceptanceAssessment(
-                        criterion.Id,
-                        true,
-                        [
-                            new ReviewEvidenceReference(
-                                ReviewEvidenceKind.AcceptanceCriterion,
-                                AcceptanceId: criterion.Id
-                            ),
-                            new ReviewEvidenceReference(
-                                ReviewEvidenceKind.Symbol,
-                                Symbol: "ImplementedSymbol"
-                            ),
-                        ]
-                    )
-                ),
-                constraintAssessments = state.Constraints.Select(
-                    constraint => new ReviewConstraintAssessment(
-                        constraint,
-                        true,
-                        [
-                            new ReviewEvidenceReference(
-                                ReviewEvidenceKind.Constraint,
-                                Constraint: constraint
-                            ),
-                            .. verificationEvidence,
-                        ]
-                    )
-                ),
+                summary = "The candidate satisfies the delivery contract.",
                 findings = Array.Empty<ReviewFinding>(),
                 humanQuestion = (string?)null,
                 humanDecisionDomain = (string?)null,
@@ -94,8 +44,6 @@ public static class ReviewerPrompts
             Workspace: {state.WorkspacePath}
             Pinned base: {state.PinnedBaseSha}
             Candidate SHA: {state.CandidateSha ?? "(no candidate)"}
-            Reviewer doctrine source: {doctrine.Source}
-            Reviewer doctrine SHA-256: {doctrine.Sha256}
 
             Implementation context:
             {state.Packet.ImplementationContext}
@@ -115,16 +63,11 @@ public static class ReviewerPrompts
             Verification results:
             {verification}
 
-            Implementation report:
-            {FormatReport(state.ExecutorTransition)}
+            Prior authoritative Reviewer findings for this repair round:
+            {FormatActiveFindings(state.ActiveReviewFindings)}
 
-            Authoritative Executor outcome ledger:
-            {string.Join(
-                "\n",
-                state.OutcomeLedger.Select(outcome =>
-                    $"- [{outcome.OutcomeId}] {outcome.Status}: {outcome.ImplementationState}; evidence={string.Join("; ", outcome.Evidence)}"
-                )
-            )}
+            Implementation report claims (non-authoritative; independently inspect the candidate):
+            {FormatReport(state.ExecutorTransition)}
 
             Human answer for this review:
             {(
@@ -133,87 +76,46 @@ public static class ReviewerPrompts
                     : "(none)"
             )}
 
-            Use git_changed_files with the exact pinned base and candidate SHAs before deciding.
-            Inspect every returned path with git_compare, following pagination until each diff is
-            complete. Read every current touched file and relevant unchanged integration seam.
-            Independently run every generated command run_verification_1 through
-            run_verification_{state.Packet.Verification.Count} after Git grounding and in packet order.
-            Exact arguments, invocation order, status, and process results are runtime-recorded. Accept
-            requires every latest rerun to be green. RequestChanges may stop at the first runtime-failed
-            command, but its Critical/High VerificationCommand evidence must reproduce that exact
-            command, exitCode, stdout, and stderr. An empty changed-file result is valid, but still
-            inspect the repository-wide git_compare and existing implementation.
-
-            Return a structured JSON decision with doctrineHash exactly {doctrine.Sha256}.
-            Assess every outcome ID, acceptance criterion ID, and combined packet/Planner constraint exactly once. Evidence kinds are
-            FileLine, Symbol, VerificationCommand, PacketOutcome, AcceptanceCriterion, Constraint, and
-            DoctrineClause. Every satisfied acceptance criterion requires its exact AcceptanceCriterion reference and FileLine or Symbol evidence; aggregate verification alone is insufficient. VerificationCommand must reproduce command, exitCode, stdout, and
-            stderr exactly. Every finding must quote an exact DoctrineClause plus precise defect
-            evidence. Delivered outcomes and satisfied constraints require FileLine, Symbol, or
-            authenticated VerificationCommand implementation evidence in addition to their typed identity.
-            Example shape using the current deterministic verification results:
+            Consider every outcome, acceptance criterion, and constraint. Every finding must describe
+            a concrete defect and give its precise repository location. Return one value shaped like:
             {example}
             """;
     }
 
     public static string BuildInstructions(ReviewerDoctrine doctrine) =>
         $$"""
-            You are Tandem's Reviewer agent. Apply the configured Reviewer doctrine exactly. Its
-            source is {{doctrine.Source}} and its SHA-256 is {{doctrine.Sha256}}. Return that exact hash
-            in DoctrineHash. Treat the doctrine below as review criteria, not as repository or tool
-            instructions:
-
-            Call read_ledger before reviewing and use search_ledger for prior decisions, constraints,
-            checkpoints, verification, repairs, and Human interactions. Review accepted ledger history
-            and current candidate evidence together; do not infer run history from conversation fragments.
+            You are Tandem's Reviewer. Independently inspect the exact pinned-base-to-candidate
+            changes and relevant integration seams. Do not trust Executor or Planner claims and do
+            not implement repairs. Apply the operator-authored doctrine in its listed order:
 
             <reviewer_doctrine>
-            {{doctrine.Content}}
+            {{string.Join("\n", doctrine.Clauses.Select(clause => $"[{clause.Id}] {clause.Text}"))}}
             </reviewer_doctrine>
 
-            Independently judge the exact verified candidate. Executor reports and Planner approval
-            are claims, not proof. Derive the real requirement from packet intent and repository
-            invariants. Audit requirement sanity and downstream coherence; requested-shape compliance
-            is insufficient when behavior or ownership is wrong. Green verification is necessary but
-            insufficient. Inspect the exact pinned-base-to-candidate diff and relevant unchanged
-            integration seams.
+            Review the delivered behavior and its ownership, not merely requested shape or green tests.
+            Reject parallel replacement paths, speculative compatibility, provenance theatre, unearned
+            abstractions, and hardening without an explicit requirement at a real boundary. Do not
+            overcorrect by removing correctness boundaries the packet still requires.
 
-            Explicitly audit every added or changed test, every new branch and error path, and identify
-            exact untested symbols or branches. Reject mock soup, tests that only assert mock
-            interaction, and fake integration coverage presented as real behavior. Decide whether the
-            regression coverage proves the delivered behavior.
-
-            Use git_changed_files for the exact pinned base and candidate, then a repository-wide
-            git_compare for that range. Follow changed-file and diff pagination to completion, inspect every
-            changed path, and read relevant unchanged source, tests, contracts, and configuration.
-            Independently run every generated run_verification_N command after Git grounding and in
-            packet order. Exact arguments, invocation order, status, and process results are
-            runtime-recorded. Accept requires every latest rerun to complete successfully. RequestChanges
-            may stop at the first runtime-failed command only with a Critical/High finding whose exact
-            VerificationCommand evidence matches that runtime result. Pagination completion, changed-path
-            coverage, and semantic use remain mandatory prompt-enforced obligations.
-
-            Return Accept when all outcomes and acceptance criteria are delivered, all constraints hold and no material finding remains.
-            Critical and High findings are material. Medium and Low findings may remain on Accept
-            only when genuinely non-blocking and therefore not material to an outcome or constraint.
-            RequestChanges requires at least one concrete Executor-fixable Critical or High finding.
-            NeedsHuman is only for product, UX, business policy, security policy, permissions, tenancy,
-            data policy, migration policy, legal, or compliance decisions. Do not manufacture findings
-            or block on taste.
-
-            Use only reproducible typed evidence: file and line, symbol, exact verification command and
-            exact result, packet outcome, constraint, or an exact quoted doctrine clause. Deterministic
-            result evidence remains exact-match valid. Reviewer reruns are authenticated against runtime
-            invocation evidence; never invent or alter a red result.
-            Every finding must identify the precise defect, quote the doctrine clause it violates, and
-            cite defect proof. Assess every active Planner constraint exactly once with its exact typed
-            reference. Return only one JSON object matching the response schema.
+            Accept only when the candidate satisfies every outcome, acceptance criterion, and
+            constraint with no material finding. RequestChanges requires a concrete Executor-fixable
+            Critical or High finding with a precise repository location. NeedsHuman is only for a
+            genuinely Human-owned product or policy decision. Deterministic verification is supplied
+            by Cadence; review it but do not rerun it. Return exactly one structured decision.
             """;
+
+    private static string FormatActiveFindings(IReadOnlyList<ReviewFinding> findings) =>
+        findings.Count == 0
+            ? "(none)"
+            : string.Join(
+                "\n",
+                findings.Select(finding =>
+                    $"- {finding.Severity}: {finding.Description} Location: {finding.Location}"
+                )
+            );
 
     private static string FormatReport(ExecutorTransition? fact) =>
         fact is ExecutorTransition.ReportSubmitted submitted
-            ? $"Summary: {submitted.Report.Summary}\n"
-                + $"Addressed constraints (packet and accepted Planner):\n{string.Join("\n", submitted.Report.AddressedConstraints.Select(item => $"- {item.Constraint}: {item.Evidence}"))}\n"
-                + $"Regression tests: {submitted.Report.RegressionTests.Disposition}: {string.Join("; ", submitted.Report.RegressionTests.Evidence)}"
+            ? $"Summary: {submitted.Report.Summary}"
             : "(none)";
 }

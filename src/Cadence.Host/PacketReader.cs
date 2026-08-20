@@ -31,6 +31,12 @@ internal static class PacketReader
                     criterion.Requirement.Trim()
                 ))
                 .ToArray(),
+            Verification = input
+                .Value.Verification.Select(entry => new VerificationCommand(
+                    entry.Label.Trim(),
+                    entry.Command.Trim()
+                ))
+                .ToArray(),
             Commands = input.Value.Commands ?? [],
             Constraints = input.Value.Constraints ?? [],
             ImplementationContext = input.Context,

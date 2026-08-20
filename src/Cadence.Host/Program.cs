@@ -14,14 +14,7 @@ internal static class Program
         {
             Description = "Path to a YAML packet with frontmatter.",
         };
-        var runIdArgument = new Argument<string>("run")
-        {
-            Description = "Cadence run ID or delivery packet path.",
-        };
-        var resumePacketOption = new Option<string?>("--packet")
-        {
-            Description = "Compatible replacement packet path.",
-        };
+        var runIdArgument = new Argument<string>("run") { Description = "Cadence run ID." };
         var homeOption = new Option<string?>("--home") { Description = "Cadence state directory." };
         var configOption = new Option<string?>("--config")
         {
@@ -62,7 +55,6 @@ internal static class Program
         var resume = new Command("resume", "Resume an interrupted executor-phase run")
         {
             runIdArgument,
-            resumePacketOption,
             homeOption,
             configOption,
             publishOption,
@@ -75,7 +67,6 @@ internal static class Program
                     () =>
                         ResumeAsync(
                             parse.GetRequiredValue(runIdArgument),
-                            parse.GetValue(resumePacketOption),
                             parse.GetValue(homeOption),
                             parse.GetValue(configOption),
                             parse.GetValue(publishOption),
@@ -145,7 +136,6 @@ internal static class Program
 
     private static async Task<int> ResumeAsync(
         string target,
-        string? packetPath,
         string? explicitHome,
         string? explicitConfig,
         bool publish,
@@ -154,8 +144,10 @@ internal static class Program
     )
     {
         var home = ResolveHome(explicitHome);
-        var resolved = await ResolveResumeTargetAsync(target, home, cancellationToken);
-        var runId = resolved.RunId;
+        if (!Guid.TryParse(target, out var runId))
+        {
+            throw new InvalidOperationException($"Invalid run ID '{target}'.");
+        }
         var execution = LoadExecutionConfiguration(home, explicitConfig);
         var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
         var workspace = Path.Combine(runDirectory, "workspace");
@@ -177,10 +169,7 @@ internal static class Program
                 $"Run '{runId:N}' belongs to workspace '{accepted.Value.WorkspacePath}', not '{workspace}'."
             );
         }
-        var packet = packetPath is not null
-            ? PacketReader.Read(packetPath)
-            : resolved.Packet ?? accepted.Value.Packet;
-        var state = accepted.Value.Resume(packet);
+        var state = accepted.Value.CloseMutationAuthority() with { ResumeRequested = true };
         var run = await store.GetRunAsync(runId, cancellationToken);
         if (run.Status != LedgerRunStatus.Running && IsResumableStatus(run.Status))
         {
@@ -198,76 +187,6 @@ internal static class Program
         );
     }
 
-    internal static async ValueTask<ResumeTarget> ResolveResumeTargetAsync(
-        string target,
-        string home,
-        CancellationToken cancellationToken
-    )
-    {
-        if (Guid.TryParse(target, out var runId))
-        {
-            return new ResumeTarget(runId, null);
-        }
-
-        var packet = PacketReader.Read(target);
-        var runsDirectory = Path.Combine(home, "runs");
-        if (!Directory.Exists(runsDirectory))
-        {
-            throw new InvalidOperationException($"No retained run matches packet '{target}'.");
-        }
-
-        foreach (
-            var runDirectory in Directory
-                .EnumerateDirectories(runsDirectory)
-                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
-        )
-        {
-            if (!Guid.TryParse(Path.GetFileName(runDirectory), out runId))
-            {
-                continue;
-            }
-            var ledgerPath = Path.Combine(runDirectory, "ledger.sqlite3");
-            if (!File.Exists(ledgerPath))
-            {
-                continue;
-            }
-
-            var store = new SqliteLedgerStore(ledgerPath);
-            var run = await store.GetRunAsync(runId, cancellationToken);
-            if (!IsResumableStatus(run.Status))
-            {
-                continue;
-            }
-            var accepted = await store.ReadLatestAcceptedAsync<CadenceState>(
-                runId,
-                cancellationToken
-            );
-            if (accepted is not null && PacketsMatch(accepted.Value.Packet, packet))
-            {
-                return new ResumeTarget(runId, packet);
-            }
-        }
-
-        throw new InvalidOperationException($"No retained run matches packet '{target}'.");
-    }
-
-    private static bool PacketsMatch(Packet left, Packet right) =>
-        string.Equals(left.Title, right.Title, StringComparison.Ordinal)
-        && string.Equals(left.Repository, right.Repository, StringComparison.Ordinal)
-        && string.Equals(left.Base, right.Base, StringComparison.Ordinal)
-        && left.Outcomes.SequenceEqual(right.Outcomes)
-        && left.Acceptance.SequenceEqual(right.Acceptance)
-        && left.Commands.SequenceEqual(right.Commands, StringComparer.Ordinal)
-        && left.Verification.SequenceEqual(right.Verification, StringComparer.Ordinal)
-        && left.Constraints.SequenceEqual(right.Constraints, StringComparer.Ordinal)
-        && string.Equals(
-            left.ImplementationContext,
-            right.ImplementationContext,
-            StringComparison.Ordinal
-        );
-
-    internal sealed record ResumeTarget(Guid RunId, Packet? Packet);
-
     private static async Task<int> ExecuteAsync(
         ExecutionConfiguration execution,
         Guid runId,
@@ -279,14 +198,12 @@ internal static class Program
     )
     {
         var clients = new ConfiguredChatClients(execution.Configuration);
-        var timeProvider = TimeProvider.System;
         var services = new ServiceCollection();
         services.AddCadence(
             new CadenceOptions(
                 clients.Build,
                 clients.ResolveProfile,
                 execution.ReviewerDoctrine,
-                timeProvider,
                 execution.GitTimeout,
                 execution.Skills
             )
@@ -337,14 +254,7 @@ internal static class Program
         Console.WriteLine($"Accepted:  {candidate}");
         if (publish)
         {
-            await PublishCoreAsync(
-                store,
-                runId,
-                branch,
-                execution.GitTimeout,
-                execution.ReviewerDoctrine.Sha256,
-                cancellationToken
-            );
+            await PublishCoreAsync(store, runId, branch, execution.GitTimeout, cancellationToken);
         }
         return 0;
     }
@@ -404,14 +314,7 @@ internal static class Program
         var store = new SqliteLedgerStore(
             Path.Combine(home, "runs", runId.ToString("N"), "ledger.sqlite3")
         );
-        await PublishCoreAsync(
-            store,
-            runId,
-            branch,
-            execution.GitTimeout,
-            execution.ReviewerDoctrine.Sha256,
-            cancellationToken
-        );
+        await PublishCoreAsync(store, runId, branch, execution.GitTimeout, cancellationToken);
         return 0;
     }
 
@@ -420,7 +323,6 @@ internal static class Program
         Guid runId,
         string? branch,
         TimeSpan? gitTimeout,
-        string reviewerDoctrineHash,
         CancellationToken cancellationToken
     )
     {
@@ -430,8 +332,7 @@ internal static class Program
                 $"Run '{runId:N}' has no accepted Cadence state."
             );
         var result = await new PublicationOperation(
-            new Git.GitProcess(timeout: gitTimeout),
-            reviewerDoctrineHash
+            new Git.GitProcess(timeout: gitTimeout)
         ).ExecuteAsync(state, branch, cancellationToken);
         Console.WriteLine($"Published: {result.Branch}");
         Console.WriteLine($"SHA:       {result.CandidateSha}");

@@ -7,10 +7,8 @@ internal static class ExecutorAgent
     internal static AgentDefinition<CadenceState> Create(
         CadenceAgentFactory agents,
         AgentCapability<CadenceState> askPlanner,
-        AgentCapability<CadenceState> updateOutcomes,
         AgentCapability<CadenceState> submitReport,
-        AgentCapability<CadenceState> writeCheckpoint,
-        DirtyWorkCheckpointPolicy dirtyWorkCheckpoint
+        AgentCapability<CadenceState> writeCheckpoint
     ) =>
         agents.Create(
             CadenceIds.Executor,
@@ -19,7 +17,6 @@ internal static class ExecutorAgent
             builder =>
                 builder
                     .WithCapability(askPlanner)
-                    .WithCapability(updateOutcomes)
                     .WithCapability(submitReport)
                     .WithMessage(ExecutorPrompts.BuildMessage)
                     .WithWorkspace(
@@ -30,7 +27,6 @@ internal static class ExecutorAgent
                                 "ls",
                                 "grep",
                                 "git:ro",
-                                agents.ExecutorGitNexus,
                                 agents.ExecutorWorkspace.Commands
                             ),
                             AgentTools.When<CadenceState>(
@@ -43,8 +39,7 @@ internal static class ExecutorAgent
                                 "move_file",
                                 "create_directory"
                             ),
-                        ],
-                        dirtyWorkCheckpoint.InterceptAsync
+                        ]
                     )
                     .WithStateGuard(
                         new AgentStateGuard<CadenceState>(
@@ -55,7 +50,7 @@ internal static class ExecutorAgent
                             MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
                             Mutation authority is not yet granted. Call ask_planner with your
                             proposed approach and evidence. Reads remain available for gathering
-                            evidence. Continue only on proceed or proceed_with_constraints.
+                            evidence. Continue only on proceed.
                             """,
                             askPlanner
                         )
@@ -79,5 +74,8 @@ internal static class ExecutorAgent
             writeCheckpoint,
             ExecutorPrompts.CheckpointInstructions,
             ExecutorPrompts.BuildCheckpointMessage
-        );
+        )
+        {
+            DisableCompaction = profile.DisableCompaction,
+        };
 }

@@ -14,9 +14,7 @@ public sealed record PlannerDecision(
 public enum PlannerDecisionValue
 {
     Proceed,
-    ProceedWithConstraints,
     ReviseApproach,
-    Reorient,
     NeedsHuman,
     Stop,
 }

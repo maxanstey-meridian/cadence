@@ -61,19 +61,16 @@ public static class HumanInteraction
                 {
                     ReviewerDecision = null,
                     ReviewerHumanAnswer = humanDecision,
-                    ReviewerHumanResolution = ReviewerHumanResolution.HumanDecision,
                 },
             (ReviewerHumanRequest.RepairCap, ReviewerHumanAnswer.ContinueRepairs) => state with
             {
                 ReviewerHumanAnswer = answer,
-                ReviewerHumanResolution = ReviewerHumanResolution.ContinueRepairs,
                 ReviewAttempt = 0,
             },
             (ReviewerHumanRequest.RepairCap, ReviewerHumanAnswer.Stop) => state with
             {
                 ReviewerDecision = null,
                 ReviewerHumanAnswer = answer,
-                ReviewerHumanResolution = ReviewerHumanResolution.Stop,
             },
             _ => throw new InvalidOperationException(
                 "The Human answer does not match the pending Reviewer request."
