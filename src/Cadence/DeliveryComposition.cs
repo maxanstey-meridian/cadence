@@ -57,6 +57,12 @@ public sealed class CadenceComposition
             )
             .Route(
                 on: cadence.PrepareWorkspace.Success,
+                when: ShouldRouteOperatorInstruction,
+                to: cadence.Planner,
+                label: "operator instruction recovery"
+            )
+            .Route(
+                on: cadence.PrepareWorkspace.Success,
                 when: IsAcceptedReviewRecovery,
                 to: cadence.AcceptCandidate,
                 label: "accepted review recovery"
@@ -88,8 +94,8 @@ public sealed class CadenceComposition
             .Route(
                 on: cadence.PrepareWorkspace.Success,
                 when: state => state.CandidateSha is null && state.ExecutorTransition is null,
-                to: cadence.Planner,
-                label: "workspace prepared"
+                to: cadence.Executor,
+                label: "fresh workspace prepared"
             )
             .Route(
                 on: cadence.PrepareWorkspace.Failed,
@@ -101,6 +107,19 @@ public sealed class CadenceComposition
                 when: state => state.ExecutorTransition is ExecutorTransition.PlannerRequested,
                 to: cadence.Planner,
                 label: "planner requested"
+            )
+            .Route(
+                on: cadence.Executor.Success,
+                when: state =>
+                    state.ExecutorTransition is ExecutorTransition.OutcomeProgressUpdated,
+                to: cadence.Executor,
+                label: "outcome progress updated"
+            )
+            .Route(
+                on: cadence.Executor.Success,
+                when: state => state.ExecutorTransition is ExecutorTransition.ContextResetRequested,
+                to: cadence.Planner,
+                label: "context reset requested"
             )
             .Route(
                 on: cadence.Executor.Success,
@@ -297,6 +316,9 @@ public sealed class CadenceComposition
         state.ReviewerDecision?.Decision == ReviewDecisionValue.NeedsHuman
         || state.ReviewerDecision?.Decision == ReviewDecisionValue.RequestChanges
             && state.ReviewAttempt >= state.MaximumReviewAttempts;
+
+    internal static bool ShouldRouteOperatorInstruction(CadenceState state) =>
+        state.OperatorInstructionPending;
 
     internal static bool IsPendingReviewerHumanRecovery(CadenceState state) =>
         IsReviewNeedsHuman(state) && state.ReviewerHumanAnswer is null;

@@ -17,7 +17,7 @@ internal static class TestSupport
             "/source",
             "main",
             [new PacketOutcome("outcome-1", "Deliver the feature")],
-            [new VerificationCommand("test", "dotnet test")],
+            [new PacketCommand("test", "dotnet test")],
             [],
             "Inspect the implementation."
         );
@@ -27,32 +27,57 @@ internal static class TestSupport
 
     internal static string CreateGitRepository()
     {
+        var path = CreateTemporaryDirectory();
+        try
+        {
+            Run(path, "init", "--initial-branch=main");
+            Run(path, "config", "user.name", "Cadence Tests");
+            Run(path, "config", "user.email", "cadence-tests@localhost");
+            Run(path, "config", "commit.gpgsign", "false");
+            File.WriteAllText(Path.Combine(path, "README.md"), "initial\n");
+            Run(path, "add", "README.md");
+            Run(path, "commit", "-m", "initial");
+            return path;
+        }
+        catch
+        {
+            Directory.Delete(path, true);
+            throw;
+        }
+    }
+
+    internal static string CreateTemporaryDirectory()
+    {
         var path = Path.Combine(Path.GetTempPath(), $"cadence-tests-{Guid.NewGuid():N}");
         Directory.CreateDirectory(path);
-        Run(path, "init");
-        Run(path, "config", "user.name", "Cadence Tests");
-        Run(path, "config", "user.email", "cadence-tests@localhost");
-        File.WriteAllText(Path.Combine(path, "README.md"), "initial\n");
-        Run(path, "add", "README.md");
-        Run(path, "commit", "-m", "initial");
         return path;
     }
 
     private static ReviewerDoctrine CreateDoctrine()
     {
-        var path = Path.Combine(Path.GetTempPath(), "cadence-tests-reviewer-doctrine.json");
-        File.WriteAllText(
-            path,
-            """
-            {
-                          "clauses": [
-                { "id": "correctness", "text": "Correctness over taste." },
-                { "id": "real-integration", "text": "Preserve behavior and test real integration." }
-              ]
-            }
-            """
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-tests-reviewer-doctrine-{Guid.NewGuid():N}.json"
         );
-        return ReviewerDoctrine.Load(path);
+        try
+        {
+            File.WriteAllText(
+                path,
+                """
+                {
+                  "clauses": [
+                    { "id": "correctness", "text": "Correctness over taste." },
+                    { "id": "real-integration", "text": "Preserve behavior and test real integration." }
+                  ]
+                }
+                """
+            );
+            return ReviewerDoctrine.Load(path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     internal static string Head(string repository) => Run(repository, "rev-parse", "HEAD").Trim();
@@ -91,15 +116,31 @@ internal static class TestSupport
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_CONFIG_GLOBAL"] = OperatingSystem.IsWindows() ? "NUL" : "/dev/null";
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        start.Environment["GIT_PAGER"] = "cat";
         foreach (var argument in arguments)
         {
             start.ArgumentList.Add(argument);
         }
         using var process =
             Process.Start(start) ?? throw new InvalidOperationException("git failed to start");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try
+        {
+            process.WaitForExitAsync(timeout.Token).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit();
+            throw new TimeoutException($"git {string.Join(' ', arguments)} timed out");
+        }
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(stderr);
@@ -199,4 +240,40 @@ internal sealed class RecordingPersistenceObserver : IPipelinePersistenceObserve
         Observations.Add(observation);
         return ValueTask.CompletedTask;
     }
+}
+
+internal static class TestContracts
+{
+    internal static SubmitReportRequest Report(string summary, string commitMessage) =>
+        new(summary, commitMessage, [], "Legacy test evidence.");
+
+    internal static SubmitReportRequest Report(
+        string summary,
+        string commitMessage,
+        IReadOnlyList<ObligationClaim> obligationClaims,
+        string regressionTestEvidence
+    ) => new(summary, commitMessage, obligationClaims, regressionTestEvidence);
+
+    internal static ReviewDecision Review(
+        ReviewDecisionValue decision,
+        string summary,
+        IReadOnlyList<ReviewFinding> findings
+    ) => new(decision, summary, [], findings);
+
+    internal static ReviewDecision Review(
+        ReviewDecisionValue decision,
+        string summary,
+        IReadOnlyList<ReviewFinding> findings,
+        string? humanQuestion,
+        HumanDecisionDomain? humanDecisionDomain
+    ) => new(decision, summary, [], findings, humanQuestion, humanDecisionDomain);
+
+    internal static ReviewDecision Review(
+        ReviewDecisionValue decision,
+        string summary,
+        IReadOnlyList<ReviewAssessment> assessments,
+        IReadOnlyList<ReviewFinding> findings,
+        string? humanQuestion = null,
+        HumanDecisionDomain? humanDecisionDomain = null
+    ) => new(decision, summary, assessments, findings, humanQuestion, humanDecisionDomain);
 }

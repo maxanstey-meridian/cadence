@@ -3,10 +3,13 @@ namespace Cadence;
 public sealed record ReviewDecision(
     ReviewDecisionValue Decision,
     string Summary,
+    IReadOnlyList<ReviewAssessment> Assessments,
     IReadOnlyList<ReviewFinding> Findings,
     string? HumanQuestion = null,
     HumanDecisionDomain? HumanDecisionDomain = null
 );
+
+public sealed record ReviewAssessment(string Id, bool Satisfied, string Evidence);
 
 public enum ReviewDecisionValue
 {

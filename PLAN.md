@@ -60,12 +60,14 @@ Explicitly exclude:
 - General durable replay orchestration.
 - Automatic merge.
 
-Explicit executor-phase recovery is not general replay. `cadence resume <run-id-or-packet>` reuses
-the retained workspace and accepted ledger facts, starts fresh model sessions, closes
-mutation authority, and routes through Planner before Executor continues. Candidate and
-verification phases remain non-resumable. The stable Cadence run ID names the durable
-delivery; each process attempt has distinct acceptance identity so resumed capability calls
-cannot collide with earlier accepted calls.
+Explicit recovery is not replay. `cadence resume <run-id>` reuses the retained workspace and
+accepted ledger facts, starts fresh model sessions, closes stale mutation authority, and lets the
+restored `CadenceState` route through the existing lifecycle. `--packet` may replace the complete
+delivery contract except repository identity. It retains the run, workspace, pinned base, and
+review-attempt configuration while resetting packet-derived progress and candidate evidence.
+Every ledger status can reopen as `Running`; that status records process-attempt ownership, not
+the lifecycle phase. Candidate, verification, review, human-interaction, accepted-candidate, and
+publication progress remain resumable within the same durable delivery and stable run ID.
 
 Repairs remain inside one run:
 
@@ -155,7 +157,7 @@ Planner owns engineering direction. Its prompt and policies must establish that 
 Planner returns one typed decision:
 
 - `Proceed`
-- `ProceedWithConstraints`
+- `ReviseApproach`
 - `NeedsHuman`
 - `Stop`
 
@@ -268,25 +270,12 @@ Reviewer returns one typed decision:
 
 Mechanical rules:
 
-- Every non-Human decision requires a completed read-only `git_changed_files` call
-  with the exact pinned base and candidate SHAs, followed by a completed repository-wide
-  `git_diff` for the same range. Both must begin at the first page.
-  The latest invocation of each Git tool is authoritative, and the latest manifest
-  must precede the latest repository-wide diff.
-- Every generated `run_verification_N` command must be attempted after Git grounding
-  in packet order. The latest invocation for each command is current: later success
-  may replace failure and later failure invalidates success.
-- `Accept` requires each current attempt to be completed with process exit code zero
-  with no timeout or truncation. `RequestChanges` may stop at the first complete runtime
-  `Failed` command only when a Critical/High finding exactly reproduces that packet
-  command and runtime exit code, stdout, and stderr. Blocked and faulted attempts never
-  qualify.
-- Every `VerificationCommand` evidence reference in outcomes, constraint assessments,
-  and findings must exactly match deterministic verification results or a complete
-  runtime invocation of the corresponding declared fixed command.
+- `Accept` and `RequestChanges` require at least one successful repository-inspection tool observation.
+- `Accept` requires current deterministic pipeline verification to be complete and green.
+- Reviewer does not receive packet verification command tools and is not required to rerun verification.
 - Every packet outcome is assessed exactly once.
 - `Accept` requires every outcome to be delivered.
-- Every finding is grounded in an exact doctrine clause and reproducible defect evidence.
+- Every Critical/High finding identifies a concrete defect and repository location.
 - `Accept` rejects Critical and High findings but preserves Medium and Low findings.
 - `RequestChanges` requires at least one Critical or High finding.
 - The decision is bound to the current candidate SHA.

@@ -17,7 +17,8 @@ public sealed record CadenceOptions(
     Func<string, CadenceAgentProfile> Profiles,
     ReviewerDoctrine ReviewerDoctrine,
     TimeSpan? GitTimeout = null,
-    IReadOnlyList<AgentSkill>? Skills = null
+    IReadOnlyList<AgentSkill>? Skills = null,
+    TimeProvider? TimeProvider = null
 );
 
 public static class CadenceRegistration
@@ -28,7 +29,14 @@ public static class CadenceRegistration
     )
     {
         services.TryAddSingleton(_ => new GitProcess(timeout: options.GitTimeout));
-        services.AddSingleton(_ => CadenceCapabilities.Create());
+        services.TryAddSingleton(options.TimeProvider ?? TimeProvider.System);
+        services.AddSingleton<DirtyWorkCheckpointPolicy>();
+        services.AddSingleton(sp =>
+            CadenceCapabilities.Create(
+                sp.GetRequiredService<TimeProvider>(),
+                sp.GetRequiredService<DirtyWorkCheckpointPolicy>()
+            )
+        );
         services.AddSingleton<WorkspacePreparation>();
         var skills = (options.Skills ?? []).ToArray();
         services.AddSingleton<CadenceParticipantsFactory>(sp =>
@@ -41,9 +49,12 @@ public static class CadenceRegistration
                 skills,
                 sp.GetRequiredService<WorkspacePreparation>(),
                 sp.GetRequiredService<GitProcess>(),
+                sp.GetRequiredService<DirtyWorkCheckpointPolicy>(),
                 capabilities.AskPlanner,
+                capabilities.UpdateOutcomes,
                 capabilities.SubmitReport,
-                capabilities.WriteCheckpoint
+                capabilities.WriteCheckpoint,
+                capabilities.ResetContext
             );
         });
         services.AddSingleton<CadenceComposition>();

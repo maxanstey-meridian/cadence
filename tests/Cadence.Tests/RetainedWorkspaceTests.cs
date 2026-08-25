@@ -5,7 +5,7 @@ namespace Cadence.Tests;
 
 public sealed class RetainedWorkspaceTests
 {
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Clean_workspace_at_captured_candidate_is_valid_for_review_resume()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -26,7 +26,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Theory]
+    [Theory(Timeout = 15_000)]
     [InlineData("dirty")]
     [InlineData("different-head")]
     public async Task Dirty_or_different_candidate_is_rejected_for_review_resume(string change)
@@ -59,7 +59,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Missing_retained_executor_workspace_fails_without_cloning()
     {
         var source = TestSupport.CreateGitRepository();
@@ -105,7 +105,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Missing_review_workspace_is_rejected()
     {
         var missing = Path.Combine(Path.GetTempPath(), $"cadence-missing-{Guid.NewGuid():N}");
@@ -118,7 +118,7 @@ public sealed class RetainedWorkspaceTests
         await act.Should().ThrowAsync<WorkspacePreparationException>();
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Accepted_review_resume_uses_strict_candidate_validation()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -131,7 +131,7 @@ public sealed class RetainedWorkspaceTests
                 CandidateSha = candidate,
                 VerificationIndex = 1,
                 VerificationResults = [PassedVerification()],
-                ReviewerDecision = new ReviewDecision(ReviewDecisionValue.Accept, "Accepted", []),
+                ReviewerDecision = TestContracts.Review(ReviewDecisionValue.Accept, "Accepted", []),
             };
             File.AppendAllText(Path.Combine(repository, "README.md"), "dirty\n");
 
@@ -148,7 +148,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Dirty_executor_resume_preserves_work_for_planner_reauthorization()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -180,8 +180,8 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
-    public async Task Uncapped_request_changes_resume_preserves_dirty_repair_and_routes_to_planner()
+    [Fact(Timeout = 15_000)]
+    public async Task Uncapped_request_changes_resume_preserves_dirty_repair_workspace()
     {
         var repository = TestSupport.CreateGitRepository();
         try
@@ -196,7 +196,7 @@ public sealed class RetainedWorkspaceTests
                 VerificationResults = [PassedVerification()],
             };
             state = state.RecordReviewDecision(
-                new ReviewDecision(
+                TestContracts.Review(
                     ReviewDecisionValue.RequestChanges,
                     "Repair required",
                     [new ReviewFinding(ReviewFindingSeverity.High, "Defect", "README.md:1")]
@@ -219,8 +219,8 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
-    public async Task Zero_result_candidate_resume_returns_to_verification_not_planner()
+    [Fact(Timeout = 15_000)]
+    public async Task Candidate_resume_continues_from_the_persisted_verification_index()
     {
         var repository = TestSupport.CreateGitRepository();
         try
@@ -235,20 +235,8 @@ public sealed class RetainedWorkspaceTests
             state = await RunOneVerificationStep(state);
             state.VerificationIndex.Should().Be(1);
             CadenceComposition.IsVerificationRecovery(state).Should().BeTrue();
-        }
-        finally
-        {
-            Directory.Delete(repository, recursive: true);
-        }
-    }
 
-    [Fact]
-    public async Task Partially_verified_candidate_resume_finishes_before_review()
-    {
-        var repository = TestSupport.CreateGitRepository();
-        try
-        {
-            var state = VerificationResumeState(repository, 1, [PassedVerification()]);
+            state = VerificationResumeState(repository, 1, [PassedVerification()]);
             await new PrepareWorkspaceStage(
                 new WorkspacePreparation(new GitProcess())
             ).ExecuteAsync(state, TestContext.Current.CancellationToken);
@@ -278,8 +266,8 @@ public sealed class RetainedWorkspaceTests
             Repository = repository,
             Verification =
             [
-                new VerificationCommand("first", "test -f README.md"),
-                new VerificationCommand("second", "test -f README.md"),
+                new PacketCommand("first", "test -f README.md"),
+                new PacketCommand("second", "test -f README.md"),
             ],
         };
         return CadenceState.Create(packet, candidate, repository) with
@@ -289,7 +277,7 @@ public sealed class RetainedWorkspaceTests
             VerificationIndex = verificationIndex,
             VerificationResults = results,
             ExecutorTransition = new ExecutorTransition.ReportSubmitted(
-                new SubmitReportRequest("Ready", "implementation")
+                TestContracts.Report("Ready", "implementation")
             ),
         };
     }
@@ -306,7 +294,7 @@ public sealed class RetainedWorkspaceTests
         return run.State;
     }
 
-    [Theory]
+    [Theory(Timeout = 15_000)]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Pending_reviewer_human_resume_requires_strict_candidate_workspace(
@@ -318,12 +306,12 @@ public sealed class RetainedWorkspaceTests
         {
             var candidate = TestSupport.Head(repository);
             var decision = reviewCap
-                ? new ReviewDecision(
+                ? TestContracts.Review(
                     ReviewDecisionValue.RequestChanges,
                     "Repair required",
                     [new ReviewFinding(ReviewFindingSeverity.High, "Defect", "README.md:1")]
                 )
-                : new ReviewDecision(
+                : TestContracts.Review(
                     ReviewDecisionValue.NeedsHuman,
                     "Product decision required",
                     [],
@@ -355,7 +343,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Persisted_human_decision_resumes_reviewer_with_answer()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -365,14 +353,24 @@ public sealed class RetainedWorkspaceTests
                 "reviewer",
                 TestSupport.Text(
                     """
-                    {"decision":"Accept","summary":"The candidate is acceptable.","findings":[],"humanQuestion":null,"humanDecisionDomain":null}
+                    {"decision":"Accept","summary":"The candidate is acceptable.","assessments":[{"id":"outcome:outcome-1","satisfied":true,"evidence":"README.md:1 preserves the Human-selected existing behavior."}],"findings":[],"humanQuestion":null,"humanDecisionDomain":null}
+                    """
+                ),
+                TestSupport.ToolCall(
+                    "reviewer-read",
+                    "file_access_read",
+                    new Dictionary<string, object?> { ["path"] = "README.md" }
+                ),
+                TestSupport.Text(
+                    """
+                    {"decision":"Accept","summary":"The candidate is acceptable.","assessments":[{"id":"outcome:outcome-1","satisfied":true,"evidence":"README.md:1 preserves the Human-selected existing behavior."}],"findings":[],"humanQuestion":null,"humanDecisionDomain":null}
                     """
                 )
             );
             var composition = CreateComposition(reviewer: reviewer);
             var state = ReviewState(
                 repository,
-                new ReviewDecision(
+                TestContracts.Review(
                     ReviewDecisionValue.NeedsHuman,
                     "A product decision is required.",
                     [],
@@ -393,7 +391,26 @@ public sealed class RetainedWorkspaceTests
             );
 
             result.Succeeded.Should().BeTrue();
-            reviewer.CallCount.Should().Be(1);
+            reviewer.CallCount.Should().Be(3);
+            reviewer
+                .Requests[1]
+                .Select(message => message.Text)
+                .Should()
+                .Contain(text =>
+                    text.Contains(
+                        "You have not examined any candidate repository evidence",
+                        StringComparison.Ordinal
+                    )
+                    && text.Contains(
+                        "whether the exact candidate completely satisfies the delivery contract",
+                        StringComparison.Ordinal
+                    )
+                );
+            reviewer
+                .AdvertisedTools.SelectMany(x => x)
+                .Should()
+                .NotContain(x => x.StartsWith("run_verification_", StringComparison.Ordinal));
+            reviewer.AdvertisedTools.SelectMany(x => x).Should().Contain("gitnexus");
             reviewer
                 .Requests.SelectMany(request => request)
                 .Should()
@@ -405,7 +422,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Persisted_continue_repairs_resets_budget_and_enters_repair_flow()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -437,7 +454,7 @@ public sealed class RetainedWorkspaceTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Persisted_stop_terminates_after_recovery()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -474,7 +491,9 @@ public sealed class RetainedWorkspaceTests
         var executor = new ScriptedChatClient("executor");
         planner ??= new ScriptedChatClient("planner");
         reviewer ??= new ScriptedChatClient("reviewer");
-        var capabilities = CadenceCapabilities.Create();
+        var git = new GitProcess();
+        var dirty = new DirtyWorkCheckpointPolicy(git, TimeProvider.System);
+        var capabilities = CadenceCapabilities.Create(TimeProvider.System, dirty);
         return new CadenceComposition(
             new CadenceParticipantsFactory(
                 name =>
@@ -489,10 +508,13 @@ public sealed class RetainedWorkspaceTests
                 TestSupport.Doctrine(),
                 [],
                 new WorkspacePreparation(new GitProcess()),
-                new GitProcess(),
+                git,
+                dirty,
                 capabilities.AskPlanner,
+                capabilities.UpdateOutcomes,
                 capabilities.SubmitReport,
-                capabilities.WriteCheckpoint
+                capabilities.WriteCheckpoint,
+                capabilities.ResetContext
             )
         );
     }
@@ -523,7 +545,7 @@ public sealed class RetainedWorkspaceTests
     }
 
     private static ReviewDecision RequestChanges() =>
-        new(
+        TestContracts.Review(
             ReviewDecisionValue.RequestChanges,
             "Repair",
             [new ReviewFinding(ReviewFindingSeverity.High, "Defect", "README.md:1")]

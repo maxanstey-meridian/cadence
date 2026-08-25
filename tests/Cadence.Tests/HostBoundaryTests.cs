@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Cadence.Host;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
@@ -9,6 +10,7 @@ using Tandem.Terminal;
 
 namespace Cadence.Tests;
 
+[Collection("Host global state")]
 public sealed class HostBoundaryTests
 {
     [Fact]
@@ -69,6 +71,7 @@ public sealed class HostBoundaryTests
             },
             "reviewer.md"
         );
+        var previousKey = Environment.GetEnvironmentVariable("CADENCE_TEST_OPENROUTER_KEY");
         Environment.SetEnvironmentVariable("CADENCE_TEST_OPENROUTER_KEY", "test-key");
         try
         {
@@ -85,7 +88,7 @@ public sealed class HostBoundaryTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("CADENCE_TEST_OPENROUTER_KEY", null);
+            Environment.SetEnvironmentVariable("CADENCE_TEST_OPENROUTER_KEY", previousKey);
         }
     }
 
@@ -314,32 +317,43 @@ public sealed class HostBoundaryTests
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void Packet_reader_rejects_blank_verification_commands(string command)
+    [InlineData("commands", "  - label: generate\n    command: ''")]
+    [InlineData("commands", "  - null")]
+    [InlineData("commands", "  - label: '   '\n    command: task generate")]
+    [InlineData("commands", "  - label: generate\n    command: '   '")]
+    [InlineData(
+        "commands",
+        "  - label: duplicate\n    command: one\n  - label: ' duplicate '\n    command: two"
+    )]
+    [InlineData("commands", "  - label: invalid.label\n    command: task generate")]
+    [InlineData("verification", "  - label: check\n    command: ''")]
+    [InlineData("verification", "  - null")]
+    [InlineData("verification", "  - label: '   '\n    command: task check")]
+    [InlineData("verification", "  - label: check\n    command: '   '")]
+    [InlineData(
+        "verification",
+        "  - label: duplicate\n    command: one\n  - label: ' duplicate '\n    command: two"
+    )]
+    [InlineData("verification", "  - label: invalid.label\n    command: task check")]
+    public void Packet_reader_rejects_invalid_labeled_command_entries(string role, string entries)
     {
-        var repository = TestSupport.CreateGitRepository();
+        var repository = TestSupport.CreateTemporaryDirectory();
         var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
         try
         {
-            File.WriteAllText(
-                packetPath,
-                $$"""
-                ---
-                title: Test packet
-                repository: {{repository}}
-                base: main
-                outcomes:
-                  - id: outcome-1
-                    description: Deliver behavior
-                acceptance: []
-                verification:
-                  - label: test
-                    command: "{{command}}"
-                ---
-                Implement the behavior.
-                """
+            var content = ValidPacket(
+                repository,
+                role == "commands" ? $"commands:\n{entries}" : ""
             );
+            if (role == "verification")
+            {
+                content = content.Replace(
+                    "verification:\n  - label: test\n    command: dotnet test",
+                    $"verification:\n{entries}",
+                    StringComparison.Ordinal
+                );
+            }
+            File.WriteAllText(packetPath, content);
 
             var act = () => PacketReader.Read(packetPath);
 
@@ -353,15 +367,31 @@ public sealed class HostBoundaryTests
     }
 
     [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void Packet_reader_rejects_blank_repository_commands(string command)
+    [InlineData("commands", 53)]
+    [InlineData("verification", 48)]
+    public void Packet_reader_rejects_tool_names_longer_than_64_characters(
+        string role,
+        int labelLength
+    )
     {
-        var repository = TestSupport.CreateGitRepository();
+        var repository = TestSupport.CreateTemporaryDirectory();
         var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
         try
         {
-            File.WriteAllText(packetPath, ValidPacket(repository, $"commands:\n  - \"{command}\""));
+            var entries = $"  - label: {new string('a', labelLength)}\n    command: task check";
+            var content = ValidPacket(
+                repository,
+                role == "commands" ? $"commands:\n{entries}" : ""
+            );
+            if (role == "verification")
+            {
+                content = content.Replace(
+                    "verification:\n  - label: test\n    command: dotnet test",
+                    $"verification:\n{entries}",
+                    StringComparison.Ordinal
+                );
+            }
+            File.WriteAllText(packetPath, content);
 
             var act = () => PacketReader.Read(packetPath);
 
@@ -401,15 +431,18 @@ public sealed class HostBoundaryTests
                     outcome: second
                     requirement: Second scenario
                 commands:
-                  - " task generate "
-                  - "task contracts"
+                  - label: " generate "
+                    command: " task generate "
+                  - label: contracts
+                    command: "task contracts"
                 verification:
                   - label: "test-1"
                     command: " dotnet test "
                   - label: "test-2"
                     command: "dotnet test"
                 constraints:
-                  - " Preserve exact text "
+                  - id: " preserve-text "
+                    requirement: " Preserve exact text "
                 ---
 
                 Inspect first.
@@ -438,14 +471,21 @@ public sealed class HostBoundaryTests
                 .Acceptance.Select(criterion => criterion.Requirement)
                 .Should()
                 .Equal("First scenario", "Second scenario");
-            packet.Commands.Should().Equal(" task generate ", "task contracts");
+            packet
+                .Commands.Should()
+                .Equal(
+                    new PacketCommand("generate", "task generate"),
+                    new PacketCommand("contracts", "task contracts")
+                );
             packet
                 .Verification.Should()
                 .Equal(
-                    new VerificationCommand("test-1", "dotnet test"),
-                    new VerificationCommand("test-2", "dotnet test")
+                    new PacketCommand("test-1", "dotnet test"),
+                    new PacketCommand("test-2", "dotnet test")
                 );
-            packet.Constraints.Should().Equal(" Preserve exact text ");
+            packet
+                .Constraints.Should()
+                .Equal(new PacketConstraint("preserve-text", "Preserve exact text"));
             packet.ImplementationContext.Should().Be("Inspect first.\nThen implement.");
         }
         finally
@@ -494,7 +534,7 @@ public sealed class HostBoundaryTests
     [Fact]
     public void Packet_reader_defaults_omitted_constraints_to_empty()
     {
-        var repository = TestSupport.CreateGitRepository();
+        var repository = TestSupport.CreateTemporaryDirectory();
         var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
         try
         {
@@ -515,7 +555,7 @@ public sealed class HostBoundaryTests
     [InlineData("verification")]
     public void Packet_reader_reports_missing_required_lists_without_validator_fault(string field)
     {
-        var repository = TestSupport.CreateGitRepository();
+        var repository = Path.GetTempPath();
         var content = ValidPacket(repository, "");
         var start = content.IndexOf($"{field}:", StringComparison.Ordinal);
         var end =
@@ -524,30 +564,20 @@ public sealed class HostBoundaryTests
                 : content.IndexOf("---", start, StringComparison.Ordinal);
         content = content.Remove(start, end - start);
 
-        try
-        {
-            var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+        var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
 
-            act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
-        }
-        finally
-        {
-            Directory.Delete(repository, recursive: true);
-        }
+        act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
     }
 
     [Theory]
     [InlineData("outcomes:\n  - null", "Packet outcomes must not contain null values.")]
-    [InlineData(
-        "constraints:\n  - null",
-        "Packet constraints must not contain null or blank values."
-    )]
+    [InlineData("constraints:\n  - null", "Packet constraints must not contain null values.")]
     public void Packet_reader_reports_null_collection_elements_as_validation_failures(
         string replacement,
         string message
     )
     {
-        var repository = TestSupport.CreateGitRepository();
+        var repository = Path.GetTempPath();
         var content = replacement.StartsWith("outcomes:", StringComparison.Ordinal)
             ? ValidPacket(repository, "")
                 .Replace(
@@ -557,41 +587,27 @@ public sealed class HostBoundaryTests
                 )
             : ValidPacket(repository, replacement);
 
-        try
-        {
-            var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+        var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
 
-            act.Should()
-                .Throw<PacketFileException>()
-                .Which.Problems.Should()
-                .Contain(problem => problem.Message == message);
-        }
-        finally
-        {
-            Directory.Delete(repository, recursive: true);
-        }
+        act.Should()
+            .Throw<PacketFileException>()
+            .Which.Problems.Should()
+            .Contain(problem => problem.Message == message);
     }
 
     [Fact]
     public void Packet_reader_requires_yaml_ambiguous_commands_to_be_quoted()
     {
-        var repository = TestSupport.CreateGitRepository();
+        var repository = Path.GetTempPath();
         var content = ValidPacket(repository, "")
             .Replace("command: dotnet test", "command: true", StringComparison.Ordinal);
 
-        try
-        {
-            var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+        var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
 
-            act.Should()
-                .Throw<PacketFileException>()
-                .Which.Problems.Should()
-                .Contain(problem => problem.Path == "$.verification[0].command");
-        }
-        finally
-        {
-            Directory.Delete(repository, recursive: true);
-        }
+        act.Should()
+            .Throw<PacketFileException>()
+            .Which.Problems.Should()
+            .Contain(problem => problem.Path == "$.verification[0].command");
     }
 
     [Fact]
@@ -602,9 +618,51 @@ public sealed class HostBoundaryTests
         var packet = PacketReader.Read(Path.Combine(root, "examples", "packet.md"));
 
         packet.Repository.Should().Be(root);
-        packet.Commands.Should().Equal("task format");
-        packet.Verification.Should().Equal(new VerificationCommand("check", "task check"));
+        packet.Commands.Should().Equal(new PacketCommand("format", "task format"));
+        packet.Verification.Should().Equal(new PacketCommand("check", "task check"));
         packet.ImplementationContext.Should().Contain("host boundary tests");
+    }
+
+    [Fact]
+    public async Task Validate_reads_the_effective_packet_without_creating_a_run()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-validate-{Guid.NewGuid():N}");
+        var repository = TestSupport.CreateTemporaryDirectory();
+        Directory.CreateDirectory(home);
+        var packetPath = Path.Combine(home, "packet.md");
+        File.WriteAllText(
+            Path.Combine(home, "config.json"),
+            ConfigurationWithRepositoriesJson(
+                new Dictionary<string, object?>
+                {
+                    [repository] = new
+                    {
+                        verification = new[] { new { label = "check", command = "task check" } },
+                    },
+                }
+            )
+        );
+        File.WriteAllText(
+            packetPath,
+            ValidPacket(repository, "")
+                .Replace("verification:\n  - label: test\n    command: dotnet test\n", "")
+        );
+        var previousFactory = Program.ChatClientFactoryOverride;
+        Program.ChatClientFactoryOverride = _ =>
+            throw new InvalidOperationException("Validation must not create a model client.");
+        try
+        {
+            var exitCode = await Program.Main(["validate", packetPath, "--home", home]);
+
+            exitCode.Should().Be(0);
+            Directory.Exists(Path.Combine(home, "runs")).Should().BeFalse();
+        }
+        finally
+        {
+            Program.ChatClientFactoryOverride = previousFactory;
+            Directory.Delete(repository, recursive: true);
+            Directory.Delete(home, recursive: true);
+        }
     }
 
     [Fact]
@@ -631,7 +689,7 @@ public sealed class HostBoundaryTests
     public async Task Invalid_configuration_fails_before_run_directory_creation()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-cli-{Guid.NewGuid():N}");
-        var repository = TestSupport.CreateGitRepository();
+        var repository = TestSupport.CreateTemporaryDirectory();
         Directory.CreateDirectory(directory);
         var packetPath = Path.Combine(directory, "packet.md");
         File.WriteAllText(packetPath, ValidPacket(repository, ""));
@@ -658,17 +716,562 @@ public sealed class HostBoundaryTests
             .Be(LedgerRunStatus.Interrupted);
     }
 
-    [Theory]
-    [InlineData(LedgerRunStatus.Running, true)]
-    [InlineData(LedgerRunStatus.Failed, true)]
-    [InlineData(LedgerRunStatus.Faulted, true)]
-    [InlineData(LedgerRunStatus.Interrupted, true)]
-    [InlineData(LedgerRunStatus.Ready, false)]
-    [InlineData(LedgerRunStatus.Cancelled, false)]
-    public void Explicit_resume_statuses_are_operator_controlled(
-        LedgerRunStatus status,
-        bool resumable
-    ) => Program.IsResumableStatus(status).Should().Be(resumable);
+    [Theory(Timeout = 30_000)]
+    [InlineData(LedgerRunStatus.Running)]
+    [InlineData(LedgerRunStatus.Ready)]
+    [InlineData(LedgerRunStatus.Failed)]
+    [InlineData(LedgerRunStatus.Faulted)]
+    [InlineData(LedgerRunStatus.Interrupted)]
+    [InlineData(LedgerRunStatus.Cancelled)]
+    public async Task Resume_reopens_every_status_and_reaches_the_pipeline_in_the_same_run(
+        LedgerRunStatus status
+    )
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-universal-resume-{Guid.NewGuid():N}");
+        var source = TestSupport.CreateGitRepository();
+        var runId = Guid.CreateVersion7();
+        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+        var workspace = Path.Combine(runDirectory, "workspace");
+        Directory.CreateDirectory(runDirectory);
+        TestSupport.Git(runDirectory, "clone", source, workspace);
+        TestSupport.Git(workspace, "remote", "remove", "origin");
+        File.WriteAllText(
+            Path.Combine(home, "reviewer-doctrine.json"),
+            "{\"clauses\":[{\"id\":\"review\",\"text\":\"Review doctrine.\"}]}"
+        );
+        var currentSkill = Path.Combine(home, "skills", "current-source-skill");
+        Directory.CreateDirectory(currentSkill);
+        File.WriteAllText(Path.Combine(currentSkill, "SKILL.md"), "# Current source skill");
+        File.WriteAllText(
+            Path.Combine(home, "config.json"),
+            ConfigurationWithRepositoriesJson(
+                new Dictionary<string, object?>
+                {
+                    [source] = new
+                    {
+                        skillDirectories = new[] { "skills/current-source-skill" },
+                        commands = new[] { new { label = "changed", command = "changed command" } },
+                        verification = new[]
+                        {
+                            new { label = "changed", command = "changed verification" },
+                        },
+                    },
+                },
+                "reviewer-doctrine.json"
+            )
+        );
+        var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+        var observer = await store.CreateObserverAsync(
+            runId,
+            "cadence",
+            TestContext.Current.CancellationToken
+        );
+        var checkpoint = new WriteCheckpointRequest("Retained work.", [], "Consult Planner.");
+        var state = CadenceState.Create(
+            TestSupport.Packet() with
+            {
+                Repository = source,
+                Commands = [new("retained-command", "retained command")],
+                Verification = [new("retained-verification", "retained verification")],
+            },
+            TestSupport.Head(source),
+            workspace
+        ) with
+        {
+            LatestCheckpoint = checkpoint,
+            ExecutorTransition = new ExecutorTransition.CheckpointWritten(checkpoint),
+        };
+        await observer.ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                CadenceIds.Executor,
+                new PipelineRunOutcome(
+                    OutcomeKinds.CheckpointWritten,
+                    CadenceIds.Executor,
+                    "Checkpoint written.",
+                    JsonSerializer.SerializeToElement(new { }),
+                    TimeSpan.Zero
+                ),
+                new PipelineAcceptedValue(
+                    typeof(CadenceState).FullName!,
+                    JsonSerializer.SerializeToElement(state, TandemJson.CreateTypedContract())
+                )
+            ),
+            TestContext.Current.CancellationToken
+        );
+        if (status != LedgerRunStatus.Running)
+        {
+            await store.CompleteRunAsync(runId, status, TestContext.Current.CancellationToken);
+        }
+        var sawRunning = false;
+        var planner = new ScriptedChatClient(
+            "planner",
+            TestSupport.ToolCall(
+                "read",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.Text(
+                "{\"decision\":\"Stop\",\"rationale\":\"Repository read supports stopping.\",\"constraints\":[],\"evidenceUsed\":[\"README.md\"],\"safeNextAction\":\"Stop safely.\",\"correctedApproach\":null,\"humanQuestion\":null,\"humanDecisionDomain\":null}"
+            )
+        )
+        {
+            BeforeCall = _ =>
+                sawRunning =
+                    store
+                        .GetRunAsync(runId, TestContext.Current.CancellationToken)
+                        .AsTask()
+                        .GetAwaiter()
+                        .GetResult()
+                        .Status == LedgerRunStatus.Running,
+        };
+        var previousFactory = Program.ChatClientFactoryOverride;
+        Program.ChatClientFactoryOverride = name =>
+            name == CadenceIds.Planner ? planner : new ScriptedChatClient(name);
+        try
+        {
+            var exitCode = await Program.Main([
+                "resume",
+                runId.ToString("N"),
+                "--instruction",
+                "Preserve retained work.",
+                "--home",
+                home,
+            ]);
+
+            exitCode.Should().Be(3);
+            sawRunning.Should().BeTrue();
+            planner.CallCount.Should().Be(2);
+            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
+            Directory.Exists(workspace).Should().BeTrue();
+            var accepted = await store.ReadLatestAcceptedAsync<CadenceState>(
+                runId,
+                TestContext.Current.CancellationToken
+            );
+            accepted.Should().NotBeNull();
+            accepted!
+                .Value.Packet.Commands.Should()
+                .Equal(new PacketCommand("retained-command", "retained command"));
+            accepted
+                .Value.Packet.Verification.Should()
+                .Equal(new PacketCommand("retained-verification", "retained verification"));
+            accepted.Value.OperatorInstruction.Should().Be("Preserve retained work.");
+        }
+        finally
+        {
+            Program.ChatClientFactoryOverride = previousFactory;
+            Directory.Delete(source, true);
+            Directory.Delete(home, true);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Resume_packet_override_replaces_incompatible_persisted_packet_before_deserialization()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-packet-resume-{Guid.NewGuid():N}");
+        var source = TestSupport.CreateGitRepository();
+        var runId = Guid.CreateVersion7();
+        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+        var workspace = Path.Combine(runDirectory, "workspace");
+        var packetPath = Path.Combine(home, "packet.md");
+        Directory.CreateDirectory(runDirectory);
+        TestSupport.Git(runDirectory, "clone", source, workspace);
+        TestSupport.Git(workspace, "remote", "remove", "origin");
+        File.WriteAllText(
+            Path.Combine(home, "reviewer-doctrine.json"),
+            "{\"clauses\":[{\"id\":\"review\",\"text\":\"Review doctrine.\"}]}"
+        );
+        File.WriteAllText(
+            Path.Combine(home, "config.json"),
+            ConfigurationWithRepositoriesJson(
+                new Dictionary<string, object?>
+                {
+                    [source] = new
+                    {
+                        commands = new[]
+                        {
+                            new { label = "install-dependencies", command = "default install" },
+                            new { label = "repository-only", command = "task repository-only" },
+                        },
+                        verification = new[] { new { label = "test", command = "default test" } },
+                    },
+                },
+                "reviewer-doctrine.json"
+            )
+        );
+        File.WriteAllText(
+            packetPath,
+            ValidPacket(
+                source,
+                "commands:\n  - label: install-dependencies\n    command: pnpm install\n  - label: generate-contracts\n    command: task contracts"
+            )
+        );
+        var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+        var observer = await store.CreateObserverAsync(
+            runId,
+            "cadence",
+            TestContext.Current.CancellationToken
+        );
+        var checkpoint = new WriteCheckpointRequest("Retained work.", [], "Consult Planner.");
+        var retained = CadenceState.Create(
+            TestSupport.Packet() with
+            {
+                Repository = source,
+                Verification =
+                [
+                    new("focused-api-tests", "dotnet test apps/api/CaseBridge.slnx"),
+                    new("focused-ui-tests", "pnpm --filter @casebridge/ui test"),
+                ],
+            },
+            TestSupport.Head(source),
+            workspace
+        ) with
+        {
+            LatestCheckpoint = checkpoint,
+            ExecutorTransition = new ExecutorTransition.CheckpointWritten(checkpoint),
+        };
+        var options = TandemJson.CreateTypedContract();
+        var legacyPayload = JsonSerializer.SerializeToNode(retained, options)!.AsObject();
+        legacyPayload["packet"]!.AsObject()["commands"] = new JsonArray(
+            JsonValue.Create("pnpm install"),
+            JsonValue.Create("task contracts")
+        );
+        var payload = JsonSerializer.SerializeToElement(legacyPayload, options);
+        var deserializeLegacy = () => payload.Deserialize<CadenceState>(options);
+        deserializeLegacy.Should().Throw<JsonException>();
+        await observer.ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                CadenceIds.Executor,
+                new PipelineRunOutcome(
+                    OutcomeKinds.CheckpointWritten,
+                    CadenceIds.Executor,
+                    "Checkpoint written.",
+                    JsonSerializer.SerializeToElement(new { }),
+                    TimeSpan.Zero
+                ),
+                new PipelineAcceptedValue(typeof(CadenceState).FullName!, payload)
+            ),
+            TestContext.Current.CancellationToken
+        );
+        var executor = new ScriptedChatClient(
+            "executor",
+            TestSupport.ToolCall(
+                "executor-read-1",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.ToolCall(
+                "executor-ask-1",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["currentSlice"] = "Resume with the replacement packet.",
+                    ["question"] = "May implementation continue?",
+                    ["proposedApproach"] = "Use only replacement-packet commands.",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            ),
+            TestSupport.ToolCall(
+                "executor-read-2",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.ToolCall(
+                "executor-ask-2",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["currentSlice"] = "Replacement commands are exposed.",
+                    ["question"] = "Stop the proof run.",
+                    ["proposedApproach"] = "Stop after proving tool replacement.",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            )
+        );
+        var planner = new ScriptedChatClient(
+            "planner",
+            TestSupport.ToolCall(
+                "planner-read-1",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.Text(
+                "{\"decision\":\"Proceed\",\"rationale\":\"Repository read supports continuing with the replacement packet.\",\"constraints\":[],\"evidenceUsed\":[\"README.md\"],\"safeNextAction\":\"Use the replacement packet commands.\",\"correctedApproach\":null,\"humanQuestion\":null,\"humanDecisionDomain\":null}"
+            ),
+            TestSupport.ToolCall(
+                "planner-read-2",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.Text(
+                "{\"decision\":\"Stop\",\"rationale\":\"Repository read supports stopping the proof run.\",\"constraints\":[],\"evidenceUsed\":[\"README.md\"],\"safeNextAction\":\"Stop safely.\",\"correctedApproach\":null,\"humanQuestion\":null,\"humanDecisionDomain\":null}"
+            )
+        );
+        var previousFactory = Program.ChatClientFactoryOverride;
+        Program.ChatClientFactoryOverride = name => name == CadenceIds.Planner ? planner : executor;
+        try
+        {
+            var exitCode = await Program.Main([
+                "resume",
+                runId.ToString("N"),
+                "--packet",
+                packetPath,
+                "--home",
+                home,
+            ]);
+
+            exitCode.Should().Be(3);
+            planner.CallCount.Should().Be(4);
+            executor.CallCount.Should().Be(4);
+            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
+            Directory.Exists(workspace).Should().BeTrue();
+            var accepted = await store.ReadLatestAcceptedAsync<CadenceState>(
+                runId,
+                TestContext.Current.CancellationToken
+            );
+            accepted.Should().NotBeNull();
+            accepted!
+                .Value.Packet.Commands.Should()
+                .Equal(
+                    new PacketCommand("install-dependencies", "pnpm install"),
+                    new PacketCommand("repository-only", "task repository-only"),
+                    new PacketCommand("generate-contracts", "task contracts")
+                );
+            accepted
+                .Value.Packet.Verification.Should()
+                .Equal(new PacketCommand("test", "dotnet test"));
+            accepted.Value.LatestCheckpoint.Should().BeNull();
+            accepted.Value.PlannerConstraints.Should().BeEmpty();
+            executor
+                .AdvertisedTools.SelectMany(tools => tools)
+                .Should()
+                .Contain("run_command_install-dependencies")
+                .And.Contain("run_command_repository-only")
+                .And.Contain("run_command_generate-contracts")
+                .And.Contain("run_verification_test")
+                .And.NotContain("run_verification_focused-api-tests")
+                .And.NotContain("run_verification_focused-ui-tests")
+                .And.NotContain("run_command_1")
+                .And.NotContain("run_command_2");
+        }
+        finally
+        {
+            Program.ChatClientFactoryOverride = previousFactory;
+            Directory.Delete(source, true);
+            Directory.Delete(home, true);
+        }
+    }
+
+    [Fact]
+    public void Resume_with_a_supplied_packet_restarts_packet_derived_delivery_state()
+    {
+        var state = TestSupport.State() with
+        {
+            MutationAuthorized = true,
+            PlannerDecision = new PlannerDecision(
+                PlannerDecisionValue.Stop,
+                "The current packet cannot continue.",
+                [],
+                [],
+                "Stop."
+            ),
+            LatestCheckpoint = new WriteCheckpointRequest(
+                "Implemented the production path.",
+                ["Dependencies are absent."],
+                "Install dependencies and continue verification."
+            ),
+        };
+        var packet = state.Packet with
+        {
+            Commands = [new("install", "pnpm install"), new("contracts", "task contracts")],
+        };
+
+        var resumed = Program.CreateResumeState(state, packet);
+
+        resumed.Packet.Should().BeSameAs(packet);
+        resumed.MutationAuthorized.Should().BeFalse();
+        resumed.PlannerDecision.Should().BeNull();
+        resumed.ResumeRequested.Should().BeTrue();
+        resumed.WorkspacePath.Should().Be(state.WorkspacePath);
+        resumed.PinnedBaseSha.Should().Be(state.PinnedBaseSha);
+        resumed.LatestCheckpoint.Should().BeNull();
+        resumed.ExecutorTransition.Should().BeNull();
+        resumed.PlannerConstraints.Should().BeEmpty();
+        resumed
+            .OutcomeProgress.Should()
+            .OnlyContain(progress => progress.Status == OutcomeStatus.NotStarted);
+        resumed.CandidateSha.Should().BeNull();
+        resumed.VerificationIndex.Should().Be(0);
+        resumed.VerificationResults.Should().BeEmpty();
+        resumed.ReviewerDecision.Should().BeNull();
+        resumed.ReviewerHumanAnswer.Should().BeNull();
+        resumed.AcceptedCandidateSha.Should().BeNull();
+    }
+
+    [Fact]
+    public void Resume_with_a_supplied_packet_rejects_a_different_repository()
+    {
+        var state = TestSupport.State();
+        var packet = state.Packet with { Repository = "/different-source" };
+
+        var resume = () => Program.CreateResumeState(state, packet);
+
+        resume
+            .Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*does not match retained run repository*");
+    }
+
+    [Fact]
+    public async Task Cross_repository_packet_rejection_does_not_reopen_the_ledger()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-repository-guard-{Guid.NewGuid():N}");
+        var retainedRepository = TestSupport.CreateGitRepository();
+        var replacementRepository = TestSupport.CreateGitRepository();
+        var runId = Guid.CreateVersion7();
+        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+        var workspace = Path.Combine(runDirectory, "workspace");
+        Directory.CreateDirectory(runDirectory);
+        var config = Path.Combine(home, "config.json");
+        var packet = Path.Combine(home, "replacement.md");
+        File.WriteAllText(config, ConfigurationJson("reviewer-doctrine.json"));
+        File.WriteAllText(packet, ValidPacket(replacementRepository, ""));
+        var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+        var observer = await store.CreateObserverAsync(
+            runId,
+            "cadence",
+            TestContext.Current.CancellationToken
+        );
+        var state = CadenceState.Create(
+            TestSupport.Packet() with
+            {
+                Repository = retainedRepository,
+            },
+            TestSupport.Head(retainedRepository),
+            workspace
+        );
+        await observer.ObserveAsync(
+            new PipelineStepCompleted(
+                runId,
+                CadenceIds.Executor,
+                new PipelineRunOutcome(
+                    OutcomeKinds.CheckpointWritten,
+                    CadenceIds.Executor,
+                    "Checkpoint written.",
+                    JsonSerializer.SerializeToElement(new { }),
+                    TimeSpan.Zero
+                ),
+                new PipelineAcceptedValue(
+                    typeof(CadenceState).FullName!,
+                    JsonSerializer.SerializeToElement(state, TandemJson.CreateTypedContract())
+                )
+            ),
+            TestContext.Current.CancellationToken
+        );
+        await store.CompleteRunAsync(
+            runId,
+            LedgerRunStatus.Failed,
+            TestContext.Current.CancellationToken
+        );
+
+        try
+        {
+            var exitCode = await Program.Main([
+                "resume",
+                runId.ToString("N"),
+                "--packet",
+                packet,
+                "--home",
+                home,
+                "--config",
+                config,
+            ]);
+
+            exitCode.Should().Be(1);
+            (await store.GetRunAsync(runId, TestContext.Current.CancellationToken))
+                .Status.Should()
+                .Be(LedgerRunStatus.Failed);
+            var latest = await store.ReadLatestAcceptedAsync<CadenceState>(
+                runId,
+                TestContext.Current.CancellationToken
+            );
+            latest!.Value.Packet.Repository.Should().Be(retainedRepository);
+        }
+        finally
+        {
+            Directory.Delete(retainedRepository, true);
+            Directory.Delete(replacementRepository, true);
+            Directory.Delete(home, true);
+        }
+    }
+
+    [Fact]
+    public void Resume_hydrates_missing_legacy_outcome_progress_without_inferring_completion()
+    {
+        var state = TestSupport.State() with { ReviewRepairRequired = true };
+        var options = TandemJson.CreateTypedContract();
+        var json = JsonSerializer.SerializeToNode(state, options)!.AsObject();
+        json.Remove("outcomeProgress");
+        var legacy = json.Deserialize<CadenceState>(options)!;
+
+        var resumed = Program.CreateResumeState(legacy);
+
+        resumed
+            .OutcomeProgress.Should()
+            .Equal(
+                new OutcomeProgress(
+                    "outcome-1",
+                    OutcomeStatus.NotStarted,
+                    "",
+                    "Produce the complete candidate state required by this outcome."
+                )
+            );
+        new SubmitReportRequestValidator(resumed)
+            .Validate(TestContracts.Report("Done", "report"))
+            .IsValid.Should()
+            .BeFalse();
+        var repaired = resumed.RecordOutcomeUpdates(
+            new([new("outcome-1", OutcomeStatus.Complete, "Repair completed.", null)])
+        );
+        repaired.ReviewRepairRequired.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Resume_without_a_packet_preserves_retained_delivery_state()
+    {
+        var state = TestSupport.State() with
+        {
+            MutationAuthorized = true,
+            PlannerDecision = new PlannerDecision(
+                PlannerDecisionValue.Stop,
+                "Stop.",
+                [],
+                ["README.md"],
+                "Stop."
+            ),
+            LatestCheckpoint = new WriteCheckpointRequest(
+                "Retained work.",
+                [],
+                "Continue retained work."
+            ),
+            OperatorInstruction = "Retained recovery instruction.",
+            OperatorInstructionPending = true,
+        };
+
+        var resumed = Program.CreateResumeState(state);
+
+        resumed.Packet.Should().BeSameAs(state.Packet);
+        resumed.MutationAuthorized.Should().BeFalse();
+        resumed.PlannerDecision.Should().BeNull();
+        resumed.ResumeRequested.Should().BeTrue();
+        resumed.LatestCheckpoint.Should().BeSameAs(state.LatestCheckpoint);
+        resumed.OutcomeProgress.Should().BeSameAs(state.OutcomeProgress);
+        resumed.CandidateSha.Should().Be(state.CandidateSha);
+        resumed.VerificationResults.Should().BeSameAs(state.VerificationResults);
+        resumed.OperatorInstruction.Should().Be(state.OperatorInstruction);
+        resumed.OperatorInstructionPending.Should().BeTrue();
+    }
 
     [Fact]
     public async Task Resume_rejects_a_ledger_bound_to_another_workspace()
@@ -729,6 +1332,484 @@ public sealed class HostBoundaryTests
         }
     }
 
+    [Fact]
+    public void Repository_defaults_match_resolved_source_and_merge_commands_by_label()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-repository-defaults-{Guid.NewGuid():N}"
+        );
+        var repository = Path.Combine(root, "source");
+        Directory.CreateDirectory(repository);
+        try
+        {
+            var configuration = new HostConfiguration(
+                new Dictionary<string, ProviderConfiguration>(),
+                new Dictionary<string, ProfileConfiguration>(),
+                "reviewer.md",
+                Repositories: new Dictionary<string, RepositoryConfiguration>
+                {
+                    [Path.Combine(repository, ".")] = new(
+                        Commands: [new("install", "default install"), new("generate", "generate")],
+                        Verification: [new("check", "default check")]
+                    ),
+                }
+            );
+            var packetPath = Path.Combine(root, "packet.md");
+            File.WriteAllText(
+                packetPath,
+                ValidPacket(
+                    "source",
+                    "commands:\n  - label: install\n    command: packet install\n  - label: finish\n    command: finish"
+                )
+            );
+
+            var packet = PacketReader.Read(packetPath, configuration);
+
+            packet.Repository.Should().Be(repository);
+            packet
+                .Commands.Should()
+                .Equal(
+                    new PacketCommand("install", "packet install"),
+                    new PacketCommand("generate", "generate"),
+                    new PacketCommand("finish", "finish")
+                );
+            packet
+                .Verification.Should()
+                .Equal(
+                    new PacketCommand("check", "default check"),
+                    new PacketCommand("test", "dotnet test")
+                );
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Repository_defaults_use_platform_path_identity()
+    {
+        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+        var repository = TestSupport.CreateTemporaryDirectory();
+        try
+        {
+            var configured = repository.ToUpperInvariant();
+            var configuration = new HostConfiguration(
+                new Dictionary<string, ProviderConfiguration>(),
+                new Dictionary<string, ProfileConfiguration>(),
+                "reviewer.md",
+                Repositories: new Dictionary<string, RepositoryConfiguration>
+                {
+                    [configured] = new(Commands: [new("check", "task check")]),
+                }
+            );
+
+            configuration.FindRepository(repository).Should().NotBeNull();
+        }
+        finally
+        {
+            Directory.Delete(repository, true);
+        }
+    }
+
+    [Fact]
+    public void Repository_verification_allows_authored_packet_to_omit_verification()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-inherited-verification-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(root);
+        try
+        {
+            var configuration = new HostConfiguration(
+                new Dictionary<string, ProviderConfiguration>(),
+                new Dictionary<string, ProfileConfiguration>(),
+                "reviewer.md",
+                Repositories: new Dictionary<string, RepositoryConfiguration>
+                {
+                    [root] = new(Verification: [new("check", "task check")]),
+                }
+            );
+            var path = Path.Combine(root, "packet.md");
+            File.WriteAllText(
+                path,
+                ValidPacket(root, "")
+                    .Replace("verification:\n  - label: test\n    command: dotnet test\n", "")
+            );
+            PacketReader
+                .Read(path, configuration)
+                .Verification.Should()
+                .Equal(new PacketCommand("check", "task check"));
+            var act = () => PacketReader.Read(path);
+            act.Should()
+                .Throw<InvalidOperationException>()
+                .WithMessage("*at least one verification*");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Effective_skills_put_global_first_deduplicate_overlap_and_use_source_repository()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-repository-skills-{Guid.NewGuid():N}"
+        );
+        var global = Path.Combine(root, "skills", "global");
+        var local = Path.Combine(root, "skills", "local");
+        Directory.CreateDirectory(global);
+        Directory.CreateDirectory(local);
+        File.WriteAllText(Path.Combine(global, "SKILL.md"), "# Global");
+        File.WriteAllText(Path.Combine(local, "SKILL.md"), "# Local");
+        try
+        {
+            var configuration = new HostConfiguration(
+                new Dictionary<string, ProviderConfiguration>(),
+                new Dictionary<string, ProfileConfiguration>(),
+                "reviewer.md",
+                ["skills/global"],
+                Repositories: new Dictionary<string, RepositoryConfiguration>
+                {
+                    [Path.Combine(root, "source")] = new(["skills/global", "skills/local"]),
+                }
+            );
+            configuration
+                .ResolveSkillDirectories(
+                    Path.Combine(root, "config.json"),
+                    Path.Combine(root, "source")
+                )
+                .Should()
+                .Equal(global, local);
+            configuration
+                .ResolveSkillDirectories(
+                    Path.Combine(root, "config.json"),
+                    Path.Combine(root, "runs", "id", "workspace")
+                )
+                .Should()
+                .Equal(global);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("relative/repository")]
+    public void Host_configuration_rejects_nonabsolute_repository_keys(string key)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"cadence-repository-key-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "config.json");
+            File.WriteAllText(
+                path,
+                ConfigurationWithRepositoriesJson(
+                    new Dictionary<string, object?> { [key] = new { } }
+                )
+            );
+            var act = () => HostConfiguration.Load(path);
+            act.Should().Throw<InvalidOperationException>().WithMessage("*absolute paths*");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Host_configuration_rejects_repository_keys_with_colliding_normalized_identity()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"cadence-repository-key-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "config.json");
+            File.WriteAllText(
+                path,
+                ConfigurationWithRepositoriesJson(
+                    new Dictionary<string, object?>
+                    {
+                        [root] = new { },
+                        [Path.Combine(root, ".")] = new { },
+                    }
+                )
+            );
+            var act = () => HostConfiguration.Load(path);
+            act.Should().Throw<InvalidOperationException>().WithMessage("*distinct paths*");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Host_configuration_rejects_invalid_repository_commands_through_packet_policy()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            $"cadence-repository-command-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "config.json");
+            File.WriteAllText(
+                path,
+                ConfigurationWithRepositoriesJson(
+                    new Dictionary<string, object?>
+                    {
+                        [root] = new
+                        {
+                            commands = new[]
+                            {
+                                new { label = "duplicate", command = "one" },
+                                new { label = "duplicate", command = "two" },
+                            },
+                        },
+                    }
+                )
+            );
+            var act = () => HostConfiguration.Load(path);
+            act.Should().Throw<FluentValidation.ValidationException>().WithMessage("*Commands*");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Packet_layer_duplicates_are_rejected_before_repository_merge_and_unmatched_repository_gets_no_defaults()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"cadence-packet-layer-{Guid.NewGuid():N}");
+        var configured = Path.Combine(root, "configured");
+        var unmatched = Path.Combine(root, "unmatched");
+        Directory.CreateDirectory(configured);
+        Directory.CreateDirectory(unmatched);
+        try
+        {
+            var configuration = new HostConfiguration(
+                new Dictionary<string, ProviderConfiguration>(),
+                new Dictionary<string, ProfileConfiguration>(),
+                "reviewer.md",
+                Repositories: new Dictionary<string, RepositoryConfiguration>
+                {
+                    [configured] = new(
+                        Commands: [new("default", "default")],
+                        Verification: [new("configured", "configured")]
+                    ),
+                }
+            );
+            var unmatchedPath = Path.Combine(root, "unmatched.md");
+            File.WriteAllText(unmatchedPath, ValidPacket(unmatched, ""));
+            var packet = PacketReader.Read(unmatchedPath, configuration);
+            packet.Commands.Should().BeEmpty();
+            packet.Verification.Should().Equal(new PacketCommand("test", "dotnet test"));
+
+            var duplicatePath = Path.Combine(root, "duplicate.md");
+            File.WriteAllText(
+                duplicatePath,
+                ValidPacket(
+                    configured,
+                    "commands:\n  - label: same\n    command: one\n  - label: same\n    command: two"
+                )
+            );
+            var act = () => PacketReader.Read(duplicatePath, configuration);
+            act.Should()
+                .Throw<PacketFileException>()
+                .Which.Problems.Should()
+                .Contain(problem => problem.Message.Contains("unique", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void Repository_skill_validation_rejects_within_layer_duplicates_and_invalid_effective_directories()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"cadence-skill-validation-{Guid.NewGuid():N}");
+        var source = Path.Combine(root, "source");
+        var valid = Path.Combine(root, "valid");
+        var noManifest = Path.Combine(root, "no-manifest");
+        Directory.CreateDirectory(source);
+        Directory.CreateDirectory(valid);
+        Directory.CreateDirectory(noManifest);
+        File.WriteAllText(Path.Combine(valid, "SKILL.md"), "# valid");
+        try
+        {
+            var duplicate = new HostConfiguration(
+                new Dictionary<string, ProviderConfiguration>(),
+                new Dictionary<string, ProfileConfiguration>(),
+                "reviewer.md",
+                Repositories: new Dictionary<string, RepositoryConfiguration>
+                {
+                    [source] = new(["valid", "./valid"]),
+                }
+            );
+            duplicate
+                .Invoking(value =>
+                    value.ResolveSkillDirectories(Path.Combine(root, "config.json"), source)
+                )
+                .Should()
+                .Throw<InvalidOperationException>()
+                .WithMessage("*distinct paths*");
+            var manifest = duplicate with
+            {
+                Repositories = new Dictionary<string, RepositoryConfiguration>
+                {
+                    [source] = new(["no-manifest"]),
+                },
+            };
+            manifest
+                .Invoking(value =>
+                    value.ResolveSkillDirectories(Path.Combine(root, "config.json"), source)
+                )
+                .Should()
+                .Throw<InvalidOperationException>()
+                .WithMessage("*SKILL.md*");
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Fresh_run_persists_the_complete_effective_packet_to_its_actual_ledger()
+    {
+        var home = Path.Combine(Path.GetTempPath(), $"cadence-fresh-effective-{Guid.NewGuid():N}");
+        var source = TestSupport.CreateGitRepository();
+        Directory.CreateDirectory(home);
+        var packetPath = Path.Combine(home, "packet.md");
+        File.WriteAllText(
+            Path.Combine(home, "reviewer-doctrine.json"),
+            "{\"clauses\":[{\"id\":\"review\",\"text\":\"Review doctrine.\"}]}"
+        );
+        File.WriteAllText(
+            Path.Combine(home, "config.json"),
+            ConfigurationWithRepositoriesJson(
+                new Dictionary<string, object?>
+                {
+                    [source] = new
+                    {
+                        commands = new[]
+                        {
+                            new { label = "replace", command = "repository replace" },
+                            new { label = "repository", command = "repository command" },
+                        },
+                        verification = new[]
+                        {
+                            new { label = "test", command = "repository test" },
+                            new { label = "repository-check", command = "repository check" },
+                        },
+                    },
+                },
+                "reviewer-doctrine.json"
+            )
+        );
+        File.WriteAllText(
+            packetPath,
+            ValidPacket(
+                source,
+                "commands:\n  - label: replace\n    command: packet replace\n  - label: packet\n    command: packet command"
+            )
+        );
+        var executor = new ScriptedChatClient(
+            "executor",
+            TestSupport.ToolCall(
+                "read",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.ToolCall(
+                "ask",
+                "ask_planner",
+                new Dictionary<string, object?>
+                {
+                    ["currentSlice"] = "Inspect fresh effective packet.",
+                    ["question"] = "Should this proof run stop?",
+                    ["proposedApproach"] = "Stop after state persistence.",
+                    ["evidence"] = new[] { "README.md" },
+                }
+            )
+        );
+        var planner = new ScriptedChatClient(
+            "planner",
+            TestSupport.ToolCall(
+                "read",
+                "file_access_read",
+                new Dictionary<string, object?> { ["path"] = "README.md" }
+            ),
+            TestSupport.Text(
+                "{\"decision\":\"Stop\",\"rationale\":\"The persistence proof can stop after repository inspection.\",\"constraints\":[],\"evidenceUsed\":[\"README.md\"],\"safeNextAction\":\"Stop safely.\",\"correctedApproach\":null,\"humanQuestion\":null,\"humanDecisionDomain\":null}"
+            )
+        );
+        var previousFactory = Program.ChatClientFactoryOverride;
+        Program.ChatClientFactoryOverride = name => name == CadenceIds.Planner ? planner : executor;
+        try
+        {
+            var exitCode = await Program.Main(["run", packetPath, "--home", home]);
+            exitCode.Should().Be(3);
+            var runDirectories = Directory.GetDirectories(Path.Combine(home, "runs"));
+            runDirectories.Should().ContainSingle();
+            var runDirectory = runDirectories.Single();
+            var workspace = Path.Combine(runDirectory, "workspace");
+            workspace.Should().NotBe(source);
+            var runId = Guid.ParseExact(Path.GetFileName(runDirectory), "N");
+            var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+            var persisted = await store.ReadLatestAcceptedAsync<CadenceState>(
+                runId,
+                TestContext.Current.CancellationToken
+            );
+            persisted.Should().NotBeNull();
+            persisted!.Value.WorkspacePath.Should().Be(workspace);
+            persisted.Value.Packet.Repository.Should().Be(source);
+            persisted
+                .Value.Packet.Commands.Should()
+                .Equal(
+                    new PacketCommand("replace", "packet replace"),
+                    new PacketCommand("repository", "repository command"),
+                    new PacketCommand("packet", "packet command")
+                );
+            persisted
+                .Value.Packet.Verification.Should()
+                .Equal(
+                    new PacketCommand("test", "dotnet test"),
+                    new PacketCommand("repository-check", "repository check")
+                );
+        }
+        finally
+        {
+            Program.ChatClientFactoryOverride = previousFactory;
+            Directory.Delete(source, true);
+            Directory.Delete(home, true);
+        }
+    }
+
+    private static string ConfigurationWithRepositoriesJson(
+        IReadOnlyDictionary<string, object?> repositories,
+        string doctrineFile = "reviewer.md"
+    )
+    {
+        var root = JsonNode.Parse(ConfigurationJson(doctrineFile))!.AsObject();
+        root["repositories"] = JsonSerializer.SerializeToNode(repositories);
+        return root.ToJsonString();
+    }
+
     private static string ValidPacket(string repository, string extra) =>
         $$"""
             ---
@@ -745,6 +1826,9 @@ public sealed class HostBoundaryTests
             verification:
               - label: test
                 command: dotnet test
+            {{(
+                extra.StartsWith("constraints:", StringComparison.Ordinal) ? "" : "constraints: []"
+            )}}
             {{extra}}
             ---
             Body
@@ -769,13 +1853,11 @@ public sealed class HostBoundaryTests
             {
               "reviewerDoctrineFile": {{JsonSerializer.Serialize(doctrineFile)}},
               "skillDirectories": {{JsonSerializer.Serialize(skillDirectories ?? [])}},
-              "providers": {
-                "local": { "baseUrl": "http://127.0.0.1:1/v1", "apiKeyEnvironmentVariable": null }
-              },
+              "providers": { "local": { "baseUrl": "http://127.0.0.1:1/v1", "apiKeyEnvironmentVariable": null } },
               "profiles": {
-                "executor": { "provider": "local", "model": "model", "contextWindowTokens": 1, "maxOutputTokens": 1, "checkpointAtPercent": 80 },
-                "planner": { "provider": "local", "model": "model", "contextWindowTokens": 1, "maxOutputTokens": 1, "checkpointAtPercent": 80 },
-                "reviewer": { "provider": "local", "model": "model", "contextWindowTokens": 1, "maxOutputTokens": 1, "checkpointAtPercent": 80 }
+                "executor": { "provider": "local", "model": "model", "contextWindowTokens": 200000, "maxOutputTokens": 32000, "checkpointAtPercent": 80 },
+                "planner": { "provider": "local", "model": "model", "contextWindowTokens": 200000, "maxOutputTokens": 32000, "checkpointAtPercent": 80 },
+                "reviewer": { "provider": "local", "model": "model", "contextWindowTokens": 200000, "maxOutputTokens": 32000, "checkpointAtPercent": 80 }
               }
             }
             """;

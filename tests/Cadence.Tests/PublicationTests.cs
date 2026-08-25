@@ -115,7 +115,8 @@ public sealed class PublicationTests
     private static VerificationResult Verification() =>
         new(0, "test", "test", 0, "passed", "", TimeSpan.Zero, false);
 
-    private static ReviewDecision Decision() => new(ReviewDecisionValue.Accept, "Accepted", []);
+    private static ReviewDecision Decision() =>
+        TestContracts.Review(ReviewDecisionValue.Accept, "Accepted", []);
 
     private static CadenceState AcceptedState(
         string repository,

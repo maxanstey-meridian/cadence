@@ -31,9 +31,15 @@ var cadence = Pipeline
     )
     .Route(
         participants.Executor.Success,
-        state => state.ExecutorTransition is ExecutorTransition.OutcomeLedgerUpdated,
+        state => state.ExecutorTransition is ExecutorTransition.OutcomeProgressUpdated,
         participants.Executor,
-        "outcome ledger updated"
+        "outcome progress updated"
+    )
+    .Route(
+        participants.Executor.Success,
+        state => state.ExecutorTransition is ExecutorTransition.ContextResetRequested,
+        participants.Planner,
+        "context reset requested"
     )
     .Route(
         participants.Executor.Success,
@@ -82,7 +88,9 @@ accepted.
 | **Planner** | Challenges the approach, adds constraints, redirects weak plans, and asks you when judgement is required | Can inspect the repository but cannot edit it or run packet commands |
 | **Reviewer** | Reviews the exact candidate and checks every requested outcome | Can request repairs but cannot alter the candidate |
 
-Verification commands come from the packet and run once, deterministically, after candidate capture. No role receives an unrestricted shell.
+Fresh runs begin with Executor repository inspection while mutation is closed. Executor then presents a grounded approach to Planner, which independently inspects the repository before approval. Planner approval authorizes that presented approach; a materially different approach requires another consultation, which closes mutation until grounded reapproval.
+
+Executor, Planner, and Reviewer can use bounded, repository-scoped GitNexus analysis alongside file reads, search, and read-only Git. Authorized Executors can also run fixed, argument-free packet verification tools during red-green iteration; those results are diagnostic only. Cadence reruns every verification command deterministically after candidate capture, and that pipeline result alone is authoritative. No role receives an unrestricted shell.
 
 ## Before Cadence accepts a change
 
@@ -105,7 +113,7 @@ limit. Cadence waits for the answer in the terminal and resumes the same live ru
 
 Cadence is a single-run pipeline, not a queue or background service. It does not manage
 campaigns or merge changes automatically. Its only process-recovery surface is explicit
-executor-phase resume from the retained workspace and accepted Tandem ledger state.
+executor-phase resume from the retained workspace and accepted Tandem ledger state written under the current Cadence state contract. Older internal persisted shapes are not automatically migrated.
 
 ## Packet
 
@@ -118,15 +126,18 @@ outcomes:
   - id: example
     description: Deliver the requested behavior
 commands:
-  - task format
+  - label: format
+    command: task format
 acceptance:
   - id: concrete-proof
     outcome: example
     requirement: A focused test proves the requested behavior for the concrete scenario
 verification:
-  - dotnet test
+  - label: test
+    command: dotnet test
 constraints:
-  - Preserve the public API
+  - id: preserve-public-api
+    requirement: Preserve the public API
 ---
 
 Inspect the relevant implementation and tests before choosing the change surface.
@@ -136,10 +147,12 @@ The frontmatter is the delivery contract. `title`, `repository`, and `base` must
 nonblank. `outcomes` is an ordered, nonempty list with unique nonblank IDs and nonblank
 descriptions. `acceptance` is an ordered, nonempty list of unique nonblank IDs, declared
 outcome references, and nonblank concrete proof requirements; every outcome needs at least
-one criterion. `commands` is an optional ordered list of exact nonblank repository commands
+one criterion. `commands` is an optional ordered list of nonblank `{ label, command }` repository entries
 available only to Executor after Planner authorizes mutation. `verification` is an ordered,
-nonempty list of exact nonblank read-only commands; duplicates remain separate checks.
-`constraints` is optional and its text is preserved exactly.
+nonempty list of nonblank `{ label, command }` read-only entries. Labels must be unique within
+their respective list and valid Tandem tool-name segments (`A-Z`, `a-z`, `0-9`, `_`, or `-`),
+with the prefixed tool name at most 64 characters.
+`constraints` is a required ordered list of `{ id, requirement }` entries. IDs are explicit, unique stable ASCII identifiers of at most 64 characters; requirements are nonblank. Cadence trims both fields while preserving authored order.
 
 Outcomes describe delivered capability. Acceptance criteria state independently reviewable
 behavioral or test proof obligations. Constraints bound every valid implementation.
@@ -155,7 +168,7 @@ preparation later proves that `base` resolves in Git. The Markdown body is trimm
 its outer edges, normalized to `\n`, and supplied unchanged as implementation context
 to Executor, Planner, and Reviewer.
 
-Packet `commands` support repository-owned generation and other implementation workflows.
+Packet `commands` use labels to advertise `run_command_<label>` tools and support repository-owned generation and other implementation workflows.
 They may modify the isolated workspace, are not rerun as verification, and do not grant an
 unrestricted shell. Prefer checked-in task or package scripts; otherwise declare the exact
 framework command and arguments required by the delivery.
@@ -174,9 +187,19 @@ Cadence reads `$CADENCE_HOME/config.json`, defaulting to `~/.cadence/config.json
   "gitTimeoutSeconds": 120,
   "reviewerDoctrineFile": "reviewer-doctrine.json",
   "skillDirectories": [
-    "/absolute/path/to/meridian",
-    "skills/repository-specific"
+    "/absolute/path/to/meridian"
   ],
+  "repositories": {
+    "/absolute/path/to/source-repository": {
+      "skillDirectories": ["skills/repository-specific"],
+      "commands": [
+        { "label": "generate-contracts", "command": "task contracts" }
+      ],
+      "verification": [
+        { "label": "check", "command": "task check" }
+      ]
+    }
+  },
   "providers": {
     "local": {
       "baseUrl": "http://localhost:11434/v1",
@@ -235,9 +258,24 @@ Clause IDs are nonblank, unique, case-sensitive operator-authored labels, and cl
 nonblank. The document has no schema version or source-byte identity. Reviewer findings describe a
 concrete defect and its precise repository location directly.
 
-`skillDirectories` is optional. Every configured directory must contain `SKILL.md`.
-Executor, Planner, and Reviewer can load these shared instructions when relevant. Skills
-do not grant permission to edit the workspace or run extra commands.
+`skillDirectories` is optional at both root and repository scope. Relative paths resolve against
+the configuration directory, and every effective directory must contain `SKILL.md`. Root skills
+come first, repository skills append, and cross-scope overlap is included once. Executor, Planner,
+and Reviewer can load these shared instructions when relevant. Skills do not grant permission to
+edit the workspace or run extra commands.
+
+`repositories` is optional. Each key is an absolute path that is normalized and matched against the
+packet's resolved source `repository`, never the isolated run workspace. Repository `commands` and
+`verification` are merged independently before state is created: configured entries retain their
+order, a packet entry with the same case-sensitive label replaces it in place, and packet-only
+labels append in packet order. Labels must be unique within each layer and satisfy the packet command
+rules. A packet may omit verification only when the matching repository supplies an effective entry.
+The effective packet persisted in the ledger always contains verification.
+
+On `resume --packet`, current defaults for the supplied packet's source repository are merged before
+the packet replaces the raw ledger packet. Resume without `--packet` retains the persisted effective
+commands and verification unchanged, while loading current root and repository skills for the
+retained packet's source repository.
 
 ## Prepare Tandem
 
@@ -266,22 +304,35 @@ package version cannot leave an older binary installed.
 Then run Cadence from any directory:
 
 ```sh
+cadence validate packet.md
 cadence run packet.md
 ```
 
-Executor-phase runs left `Running`, `Failed`, `Interrupted`, or `Faulted` can resume from their retained workspace and
-accepted state in `~/.cadence/runs/<run-id>/ledger.sqlite3`, with fresh agent sessions. Pass the run ID. Ready and cancelled runs remain terminal:
+`validate` parses the packet through the same production reader as `run`, applies matching
+repository command and verification defaults, and exits without creating a run, workspace,
+ledger, or model client.
+
+Any existing run can continue from its retained workspace and latest accepted state in
+`~/.cadence/runs/<run-id>/ledger.sqlite3`, with fresh model sessions:
 
 ```sh
 cadence resume <run-id>
+cadence resume <run-id> --packet replacement.md
 ```
 
-Resume always uses the packet persisted for that run. Start a new run to change delivery intent.
-
-Resume preserves the run ID and dirty workspace, starts a distinct execution attempt, closes
-mutation authority, and routes through Planner before Executor continues. It does not replay
-the interrupted model session. The retained workspace is validated against the exact accepted
-base SHA. Legacy `records.json` runs are not imported or resumable.
+Ordinary resume preserves the run ID, ledger, workspace, pinned base, and delivery progress. A
+supplied packet may change every delivery-contract field except repository identity. It retains
+the run ID, ledger, workspace, pinned base, and review-attempt configuration, but deliberately
+resets packet-derived outcomes, Planner constraints, checkpoints, candidate evidence,
+verification, review, findings, Human answers, and accepted SHA before normal domain transitions
+continue. Resume
+closes stale mutation authority, clears process-attempt model decisions, and reopens the same
+ledger run as `Running`; the persisted `CadenceState` then selects the lifecycle phase through
+the existing pipeline. Ledger status `Running` means a process attempt currently owns the run—it
+does not mean the lifecycle is in Executor. `Ready`, `Cancelled`, candidate, verification, review,
+and human-interaction states all resume by their retained domain state. The workspace remains
+validated against the exact accepted base or candidate SHA. Legacy `records.json` runs are not
+imported or resumable.
 
 Pass `--publish` to publish immediately after Reviewer acceptance, or publish later
 with the printed run ID:

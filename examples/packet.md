@@ -10,17 +10,19 @@ acceptance:
     outcome: packet-contract
     requirement: The checked-in example parses and documents every required packet field
 commands:
-  - task format
+  - label: format
+    command: task format
 verification:
   - label: check
     command: task check
 constraints:
-  - Preserve packet field and authored command order
+  - id: preserve-packet-order
+    requirement: Preserve packet field and authored command order
 ---
 
 ## Known context
 
-Packet field order and authored repository and verification command order are part of the public contract.
+Packet field order and authored repository and verification command order are part of the public contract. Command and verification labels must be unique within their respective lists, use only valid Tandem tool-name segment characters (`A-Z`, `a-z`, `0-9`, `_`, or `-`), and keep the corresponding `run_command_<label>` or `run_verification_<label>` tool name at most 64 characters.
 
 ## Inspect first
 

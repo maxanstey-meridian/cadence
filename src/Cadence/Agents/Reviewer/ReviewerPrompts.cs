@@ -1,107 +1,89 @@
-using System.Text.Json;
-
 namespace Cadence;
 
 public static class ReviewerPrompts
 {
     public static string BuildMessage(CadenceState state)
     {
-        var outcomes = string.Join(
-            "\n",
-            state.Packet.Outcomes.Select(o => $"- [{o.Id}] {o.Description}")
-        );
-        var acceptance = string.Join(
-            "\n",
-            state.Packet.Acceptance.Select(criterion =>
-                $"- [{criterion.Id}] outcome={criterion.OutcomeId}: {criterion.Requirement}"
-            )
-        );
-        var packetConstraints =
-            state.Packet.Constraints.Count > 0
-                ? string.Join("\n", state.Packet.Constraints.Select(c => $"- {c}"))
-                : "(none)";
-        var plannerConstraints =
-            state.PlannerConstraints.Count > 0
-                ? string.Join("\n", state.PlannerConstraints.Select(c => $"- {c}"))
-                : "(none)";
+        var contract = DeliveryContractRenderer.Render(state);
         var verification =
             state.VerificationResults.Count > 0
                 ? VerificationResultFormatting.Format(state.VerificationResults)
                 : "(no verification commands)";
-        var example = JsonSerializer.Serialize(
-            new
-            {
-                decision = "Accept",
-                summary = "The candidate satisfies the delivery contract.",
-                findings = Array.Empty<ReviewFinding>(),
-                humanQuestion = (string?)null,
-                humanDecisionDomain = (string?)null,
-            },
-            new JsonSerializerOptions(TandemJson.CreateTypedContract()) { WriteIndented = true }
-        );
         return $"""
             Packet: {state.Packet.Title}
             Workspace: {state.WorkspacePath}
-            Pinned base: {state.PinnedBaseSha}
-            Candidate SHA: {state.CandidateSha ?? "(no candidate)"}
+            Current mechanical pinned base: {state.PinnedBaseSha}
+            Current mechanical candidate SHA: {state.CandidateSha ?? "(no candidate)"}
+
+            Operator recovery instruction:
+            {state.OperatorInstruction ?? "(none)"}
 
             Implementation context:
             {state.Packet.ImplementationContext}
 
-            Outcomes:
-            {outcomes}
+            {contract}
 
-            Acceptance criteria:
-            {acceptance}
-
-            Packet constraints:
-            {packetConstraints}
-
-            Planner constraints:
-            {plannerConstraints}
-
-            Verification results:
+            Current mechanical verification results bound to the candidate:
             {verification}
 
-            Prior authoritative Reviewer findings for this repair round:
+            Current repair findings recorded by the workflow:
             {FormatActiveFindings(state.ActiveReviewFindings)}
 
-            Implementation report claims (non-authoritative; independently inspect the candidate):
+            Executor handoff notes (unverified):
             {FormatReport(state.ExecutorTransition)}
 
-            Human answer for this review:
+            Human answer for this review (authoritative only for the requested Human-owned decision):
             {(
                 state.ReviewerHumanAnswer is ReviewerHumanAnswer.HumanDecision answer
                     ? answer.Text
                     : "(none)"
             )}
 
-            Consider every outcome, acceptance criterion, and constraint. Every finding must describe
-            a concrete defect and give its precise repository location. Return one value shaped like:
-            {example}
+            Required review outcome:
+            Determine whether the exact candidate repository state completely satisfies every outcome,
+            acceptance criterion, and constraint above and contains no blocking defect within the
+            delivery scope. Return one structured decision matching the review contract.
             """;
     }
 
     public static string BuildInstructions(ReviewerDoctrine doctrine) =>
         $$"""
-            You are Tandem's Reviewer. Independently inspect the exact pinned-base-to-candidate
-            changes and relevant integration seams. Do not trust Executor or Planner claims and do
-            not implement repairs. Apply the operator-authored doctrine in its listed order:
+            You are Tandem's Reviewer, an independent code-review agent responsible for deciding whether
+            the exact candidate should be accepted.
+
+            Review the candidate as a production change against the complete packet. Inspect the repository
+            state necessary to reach that decision, including relevant unchanged code. Look for concrete
+            counterexamples to claimed completion before accepting. Do not implement repairs.
+
+            The repository is the subject of the review. The packet defines the required result, and
+            mechanical verification records whether configured commands passed. Implementation reports,
+            ledger entries, prior decisions, and participant claims do not establish that the candidate is
+            correct or complete.
+
+            For an absence or removal requirement, inspect the candidate scope in which the prohibited
+            concept could remain. A diff of selected changed files is not enough.
+
+            Apply the operator-authored doctrine in its listed order:
 
             <reviewer_doctrine>
             {{string.Join("\n", doctrine.Clauses.Select(clause => $"[{clause.Id}] {clause.Text}"))}}
             </reviewer_doctrine>
 
-            Review the delivered behavior and its ownership, not merely requested shape or green tests.
-            Reject parallel replacement paths, speculative compatibility, provenance theatre, unearned
-            abstractions, and hardening without an explicit requirement at a real boundary. Do not
-            overcorrect by removing correctness boundaries the packet still requires.
+            Unwarranted machinery is a defect only when the packet, active constraints, repository
+            invariants, or a concrete implementation boundary does not justify it and it causes a
+            correctness, contract, ownership, dependency, or maintenance problem. Architectural preference
+            alone is not a blocking finding, and required correctness boundaries must remain intact.
 
-            Accept only when the candidate satisfies every outcome, acceptance criterion, and
-            constraint with no material finding. RequestChanges requires a concrete Executor-fixable
-            Critical or High finding with a precise repository location. NeedsHuman is only for a
-            genuinely Human-owned product or policy decision. Deterministic verification is supplied
-            by Cadence; review it but do not rerun it. Return exactly one structured decision.
+            Accept means every obligation is established satisfied and no Critical or High finding
+            remains. RequestChanges means at least one concrete Executor-fixable Critical or High defect
+            prevents the candidate from satisfying the delivery contract. NeedsHuman means completion
+            depends on a genuinely Human-owned product or policy decision. Every non-Human decision must
+            assess every obligation exactly once by ID and record each established defect at a precise
+            repository location.
+
+            Accept requires complete green post-capture verification bound to the exact candidate. A Human
+            answer resolves only its requested Human-owned decision and does not waive unrelated obligations.
+            Return exactly one structured decision.
             """;
 
     private static string FormatActiveFindings(IReadOnlyList<ReviewFinding> findings) =>

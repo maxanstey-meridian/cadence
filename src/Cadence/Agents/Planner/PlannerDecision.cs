@@ -1,9 +1,11 @@
 namespace Cadence;
 
+public sealed record PlannerConstraint(string Id, string Requirement);
+
 public sealed record PlannerDecision(
     PlannerDecisionValue Decision,
     string Rationale,
-    IReadOnlyList<string> Constraints,
+    IReadOnlyList<PlannerConstraint> Constraints,
     IReadOnlyList<string> EvidenceUsed,
     string SafeNextAction,
     string? CorrectedApproach = null,

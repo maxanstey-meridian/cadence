@@ -11,9 +11,12 @@ public sealed class CadenceParticipantsFactory(
     IReadOnlyList<AgentSkill> skills,
     WorkspacePreparation workspacePreparation,
     GitProcess git,
+    DirtyWorkCheckpointPolicy dirtyWorkCheckpoint,
     AgentCapability<CadenceState> askPlanner,
+    AgentCapability<CadenceState> updateOutcomes,
     AgentCapability<CadenceState> submitReport,
-    AgentCapability<CadenceState> writeCheckpoint
+    AgentCapability<CadenceState> writeCheckpoint,
+    AgentCapability<CadenceState> resetContext
 )
 {
     public CadenceParticipants Create()
@@ -24,13 +27,19 @@ public sealed class CadenceParticipantsFactory(
                 state.MutationAuthorized
                     ?
                     [
-                        .. state.Packet.Commands.Select(
-                            (command, index) =>
-                                AgentCommand.Define(
-                                    $"run_command_{index + 1}",
-                                    $"Run repository command {index + 1}: {command}",
-                                    command
-                                )
+                        .. state.Packet.Verification.Select(command =>
+                            AgentCommand.Define(
+                                $"run_verification_{command.Label}",
+                                $"Run diagnostic verification command {command.Label}: {command.Command}",
+                                command.Command
+                            )
+                        ),
+                        .. state.Packet.Commands.Select(command =>
+                            AgentCommand.Define(
+                                $"run_command_{command.Label}",
+                                $"Run repository command {command.Label}: {command.Command}",
+                                command.Command
+                            )
                         ),
                     ]
                     : []
@@ -48,7 +57,15 @@ public sealed class CadenceParticipantsFactory(
         );
         return new CadenceParticipants(
             new PrepareWorkspaceStage(workspacePreparation),
-            ExecutorAgent.Create(agents, askPlanner, submitReport, writeCheckpoint),
+            ExecutorAgent.Create(
+                agents,
+                askPlanner,
+                updateOutcomes,
+                submitReport,
+                writeCheckpoint,
+                resetContext,
+                dirtyWorkCheckpoint
+            ),
             PlannerAgent.Create(agents),
             new PlannerFailureStage().Definition,
             new CaptureCandidateStage(git),

@@ -24,9 +24,28 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
         RuleFor(decision => decision.Constraints)
             .NotNull()
             .WithErrorCode("planner.constraints.required");
+        RuleFor(decision => decision.Constraints)
+            .Must(constraints =>
+                constraints is not null
+                && constraints.All(constraint => constraint is not null)
+                && constraints
+                    .Select(constraint => constraint.Id)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() == constraints.Count
+            )
+            .WithErrorCode("planner.constraints.unique");
         RuleForEach(decision => decision.Constraints)
-            .Must(BeMeaningful)
-            .WithErrorCode("planner.constraints.meaningful");
+            .ChildRules(constraint =>
+            {
+                constraint
+                    .RuleFor(value => value.Id)
+                    .Must(BeStableId)
+                    .WithErrorCode("planner.constraint.id");
+                constraint
+                    .RuleFor(value => value.Requirement)
+                    .Must(BeMeaningful)
+                    .WithErrorCode("planner.constraint.requirement");
+            });
         RuleFor(decision => decision.Constraints)
             .Empty()
             .WithErrorCode("planner.constraints.forbidden_for_non_authorizing_decision")
@@ -69,6 +88,23 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
             .When(decision => decision.Decision != PlannerDecisionValue.NeedsHuman);
     }
 
+    private static bool BeStableId(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Trim().Length <= 64
+        && value
+            .Trim()
+            .All(character =>
+                character
+                    is >= 'A'
+                        and <= 'Z'
+                        or >= 'a'
+                        and <= 'z'
+                        or >= '0'
+                        and <= '9'
+                        or '_'
+                        or '-'
+            );
+
     internal static bool BeMeaningful(string? value) =>
         !string.IsNullOrWhiteSpace(value) && !_placeholders.Contains(value.Trim());
 }
@@ -76,7 +112,13 @@ public sealed class PlannerDecisionValidator : AbstractValidator<PlannerDecision
 public sealed class PlannerDecisionOutput : IAgentOutputDefinition<CadenceState, PlannerDecision>
 {
     public string Instructions =>
-        "Return a validated planning decision grounded in packet and repository evidence; SafeNextAction must be one immediate action, not the authorized scope.";
+        """
+            Return a validated planning decision grounded in the packet, active constraints, current
+            lifecycle state, and repository facts established during this consultation. evidenceUsed
+            must record the source and material fact established from it, not merely name an artifact.
+            SafeNextAction records the immediate lifecycle consequence or continuity context. It must
+            not prescribe a local task sequence or substitute for the complete engineering direction.
+            """;
 
     public IValidator<PlannerDecision> Validator { get; } = new PlannerDecisionValidator();
 
@@ -85,12 +127,15 @@ public sealed class PlannerDecisionOutput : IAgentOutputDefinition<CadenceState,
             new(
                 state.Packet.Title,
                 new PlannerDecision(
-                    PlannerDecisionValue.Proceed,
-                    "The packet is actionable and repository evidence supports direct implementation.",
+                    PlannerDecisionValue.ReviseApproach,
+                    "The proposed controller-only deletion cannot produce the complete packet outcome because the candidate would retain the legacy capability in its generated contract and runtime registration.",
                     [],
-                    ["README.md"],
-                    "Implement the approved approach through the inspected seam.",
-                    null,
+                    [
+                        "AuthenticationController.cs: the proposed deletion removes the controller action.",
+                        "generated/auth-client.ts and AuthModule.cs: the legacy capability remains in the public contract and runtime registration, so the packet outcome would remain incomplete.",
+                    ],
+                    "Executor must continue from a corrected direction that owns removal of the complete legacy capability rather than treating controller deletion as the delivery scope.",
+                    "Remove the legacy authentication capability across the complete candidate scope implied by the packet while preserving the required current route and response contract.",
                     null,
                     null
                 )

@@ -13,10 +13,14 @@ verification:
   - label: check
     command: task check
 constraints:
-  - Keep the change within the optional @tandem/packets package and its tests
-  - Derive locations from the parsed YAML document rather than reparsing or searching source text
-  - Preserve the existing PacketProblem and PacketFileError public API
-  - Do not change C# packet behavior or the shared portable fixture contract unless parity requires it
+  - id: optional-packets-scope
+    requirement: Keep the change within the optional @tandem/packets package and its tests
+  - id: derive-yaml-locations
+    requirement: Derive locations from the parsed YAML document rather than reparsing or searching source text
+  - id: preserve-packet-problem-api
+    requirement: Preserve the existing PacketProblem and PacketFileError public API
+  - id: preserve-portable-fixture-contract
+    requirement: Do not change C# packet behavior or the shared portable fixture contract unless parity requires it
 ---
 
 Inspect the TypeScript packet parser and its existing Zod issue normalization before

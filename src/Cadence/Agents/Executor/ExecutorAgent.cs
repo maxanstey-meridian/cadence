@@ -7,8 +7,11 @@ internal static class ExecutorAgent
     internal static AgentDefinition<CadenceState> Create(
         CadenceAgentFactory agents,
         AgentCapability<CadenceState> askPlanner,
+        AgentCapability<CadenceState> updateOutcomes,
         AgentCapability<CadenceState> submitReport,
-        AgentCapability<CadenceState> writeCheckpoint
+        AgentCapability<CadenceState> writeCheckpoint,
+        AgentCapability<CadenceState> resetContext,
+        DirtyWorkCheckpointPolicy dirtyWorkCheckpoint
     ) =>
         agents.Create(
             CadenceIds.Executor,
@@ -17,7 +20,9 @@ internal static class ExecutorAgent
             builder =>
                 builder
                     .WithCapability(askPlanner)
+                    .WithCapability(updateOutcomes)
                     .WithCapability(submitReport)
+                    .WithCapability(resetContext)
                     .WithMessage(ExecutorPrompts.BuildMessage)
                     .WithWorkspace(
                         agents.ExecutorWorkspace,
@@ -27,6 +32,7 @@ internal static class ExecutorAgent
                                 "ls",
                                 "grep",
                                 "git:ro",
+                                agents.ExecutorGitNexus,
                                 agents.ExecutorWorkspace.Commands
                             ),
                             AgentTools.When<CadenceState>(
@@ -39,7 +45,8 @@ internal static class ExecutorAgent
                                 "move_file",
                                 "create_directory"
                             ),
-                        ]
+                        ],
+                        dirtyWorkCheckpoint.InterceptAsync
                     )
                     .WithStateGuard(
                         new AgentStateGuard<CadenceState>(
@@ -48,9 +55,10 @@ internal static class ExecutorAgent
                             new HashSet<ToolEffect> { ToolEffect.WorkspaceMutation },
                             """
                             MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
-                            Mutation authority is not yet granted. Call ask_planner with your
-                            proposed approach and evidence. Reads remain available for gathering
-                            evidence. Continue only on proceed.
+                            Mutation authority is not yet granted. Establish enough repository state
+                            to present a concrete grounded approach, then call ask_planner with that
+                            approach and evidence. Reads remain available for establishing the required
+                            repository facts. Continue only on Proceed.
                             """,
                             askPlanner
                         )

@@ -5,7 +5,7 @@ namespace Cadence.Tests;
 
 public sealed class ProcessAdoptionTests
 {
-    [Fact]
+    [Fact(Timeout = 5_000)]
     public async Task Git_process_preserves_arguments_working_directory_and_nonzero_result()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -45,7 +45,7 @@ public sealed class ProcessAdoptionTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 5_000)]
     public async Task Git_process_fails_closed_when_output_is_truncated()
     {
         var repository = TestSupport.CreateGitRepository();
@@ -70,7 +70,7 @@ public sealed class ProcessAdoptionTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 5_000)]
     public async Task Git_process_maps_timeout_to_minus_one_timed_out_result()
     {
         if (OperatingSystem.IsWindows())
@@ -92,7 +92,7 @@ public sealed class ProcessAdoptionTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 5_000)]
     public async Task Git_process_propagates_caller_cancellation()
     {
         if (OperatingSystem.IsWindows())
@@ -136,9 +136,13 @@ public sealed class ProcessAdoptionTests
         }
     }
 
-    [Fact]
+    [Fact(Timeout = 5_000)]
     public async Task Verification_timeout_is_a_failed_result_with_deterministic_evidence()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
         var result = await RunVerificationAsync("sleep 5", TimeSpan.FromMilliseconds(100));
 
         result.ExitCode.Should().Be(-1);
@@ -173,7 +177,7 @@ public sealed class ProcessAdoptionTests
             var packet = TestSupport.Packet() with
             {
                 Repository = repository,
-                Verification = [new VerificationCommand("test", command)],
+                Verification = [new PacketCommand("test", command)],
             };
             var stage = new VerificationStage(
                 new VerificationOperation(new GitProcess(), timeout, outputBound)

@@ -22,6 +22,7 @@ internal static class ReviewerAgent
                                 "ls",
                                 "grep",
                                 "git:ro",
+                                agents.ReviewerGitNexus,
                                 agents.ReviewerWorkspace.Commands
                             ),
                         ]
@@ -31,7 +32,7 @@ internal static class ReviewerAgent
                         new ReviewDecisionOutput(),
                         (state, decision) => state.RecordReviewDecision(decision)
                     )
-                    .RequireOutputAcceptance(ReviewerPolicies.RepositoryGrounded())
+                    .RequireOutputAcceptance(ReviewerPolicies.ContractComplete())
                     .WithConversationPolicy(ReviewerPolicies.DiscardAfterDecision)
         );
 }

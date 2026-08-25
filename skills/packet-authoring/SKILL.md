@@ -137,10 +137,10 @@ Mechanical sibling outcomes may remain together. Do not preserve a giant packet 
 Write the packet to:
 
 ```text
-.cadence/packets/<short-kebab-slug>.md
+~/.cadence/plans/<short-kebab-slug>.md
 ```
 
-Create the directory when needed. The location is a repository convention, not runtime identity; do not add timestamps, run IDs, or other execution bookkeeping.
+Create the directory when needed. Do not place packets in repository-local `.cadence/packets/` directories. Use an absolute `repository` path because relative paths resolve from the centrally stored packet. The location is an operator convention, not runtime identity; do not add timestamps, run IDs, or other execution bookkeeping.
 
 Write the file but never run `cadence run` as part of authoring. Only the human initiates a model run.
 
@@ -159,7 +159,8 @@ outcomes:
   - id: duplicate-email
     description: An existing email address is rejected without creating another account
 commands:
-  - task generate
+  - label: generate
+    command: task generate
 acceptance:
   - id: registration-valid
     outcome: registration
@@ -171,7 +172,8 @@ verification:
   - label: check
     command: task check
 constraints:
-  - Preserve the existing authentication boundary
+  - id: preserve-authentication-boundary
+    requirement: Preserve the existing authentication boundary
 ---
 ```
 
@@ -182,12 +184,12 @@ Required frontmatter:
 - `base`: Git reference used to prepare the isolated workspace.
 - `outcomes`: ordered, nonempty list of unique nonblank `id` and nonblank `description` values.
 - `acceptance`: ordered, nonempty list of unique nonblank `id`, an `outcome` referencing a declared outcome ID, and a nonblank concrete `requirement`. Every outcome must have at least one criterion.
-- `verification`: ordered, nonempty list of entries with a nonblank `label` (a short kebab-case slug used as the tool name suffix, e.g. `unit-tests`, `lint`) and a nonblank `command` string supported by repository tooling.
+- `verification`: ordered entries with a nonblank `label` (a short kebab-case slug used as the tool name suffix, e.g. `unit-tests`, `lint`) and a nonblank `command` string supported by repository tooling. It may be omitted only when Cadence host configuration supplies repository verification defaults; the final effective packet is always nonempty.
 
 Optional frontmatter:
 
-- `commands`: ordered exact repository commands needed during implementation. Omit it or use `[]` when none apply.
-- `constraints`: ordered exact requirements. Omit it or use `[]` when none apply.
+- `commands`: ordered entries with a nonblank `label` and exact nonblank `command` needed during implementation. Omit it or use `[]` when none apply.
+- `constraints`: ordered entries with a unique stable nonblank `id` and nonblank exact `requirement`. Omit it or use `[]` when none apply.
 
 Quote strings containing YAML-significant punctuation, especially `: `, `#`, braces, brackets, or scalar-looking values such as `true`, `false`, `null`, and numbers.
 
@@ -208,6 +210,7 @@ command may exercise it.
 
 ### Commands
 
+- Packet command labels override matching repository-default labels in place; new labels append after repository defaults. Each entry has a `label` and `command`. Labels must be unique within commands, contain only ASCII letters, digits, `_`, or `-`, and keep `run_command_<label>` at most 64 characters.
 - Include only commands the Executor must run to implement the packet, such as migration, contract, or client generation.
 - Use the exact command and fixed arguments supported by checked-in repository tooling on `base`.
 - Prefer checked-in task or package scripts over raw framework commands when they exist.
@@ -219,8 +222,8 @@ command may exercise it.
 
 ### Verification
 
-- Each entry has a `label` (short kebab-case slug, e.g. `unit-tests`, `lint`, `typecheck`) and a `command` (exact shell command).
-- The `label` becomes the executor and reviewer tool name: `run_verification_<label>`. Choose a descriptive label that helps the model understand what the command does.
+- Packet verification labels override matching repository-default labels in place; new labels append after repository defaults. Each entry has a `label` (short slug, e.g. `unit-tests`, `lint`, `typecheck`) and a `command` (exact shell command). Labels must be unique within verification, contain only ASCII letters, digits, `_`, or `-`, and keep the prefixed tool name at most 64 characters.
+- After Planner authorization, the `label` becomes the Executor diagnostic tool name `run_verification_<label>`. Reviewer does not receive command tools; candidate-bound pipeline verification remains authoritative.
 - Use exact commands supported by checked-in repository tooling on `base`.
 - Prefer the repository's established aggregate gate when it materially proves the outcomes.
 - Add focused commands only when the aggregate gate does not prove a material behavior.
