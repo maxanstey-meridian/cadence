@@ -35,15 +35,23 @@ internal static class PacketReader
                 ))
                 .ToArray(),
             Verification = input
-                .Value.Verification.Select(entry => new PacketCommand(
+                .Value.Verification.Select(entry => new PacketCommandEntry(
                     entry.Label.Trim(),
-                    entry.Command.Trim()
+                    entry.Command.Trim(),
+                    entry
+                        .Arguments?.Where(argument => argument is not null)
+                        .Select(argument => argument.Trim())
+                        .ToArray()
                 ))
                 .ToArray(),
             Commands = input
-                .Value.Commands.Select(entry => new PacketCommand(
+                .Value.Commands.Select(entry => new PacketCommandEntry(
                     entry.Label.Trim(),
-                    entry.Command.Trim()
+                    entry.Command.Trim(),
+                    entry
+                        .Arguments?.Where(argument => argument is not null)
+                        .Select(argument => argument.Trim())
+                        .ToArray()
                 ))
                 .ToArray(),
             Constraints = input

@@ -4,10 +4,6 @@ vars:
   SOLUTION: "{{.ROOT_DIR}}/Cadence.slnx"
 
 tasks:
-  prepare:
-    cmds:
-      - "{{.ROOT_DIR}}/scripts/pack-tandem.sh"
-
   build:
     cmds:
       - dotnet build {{.SOLUTION}}
@@ -17,18 +13,16 @@ tasks:
       - dotnet test {{.SOLUTION}}
 
   run:
-    deps: [prepare]
     cmds:
       - dotnet restore {{.SOLUTION}} --force-evaluate
       - dotnet run --no-restore --project {{.ROOT_DIR}}/src/Cadence.Host -- run {{.CLI_ARGS}}
 
   install:
-    deps: [prepare]
     cmds:
       - dotnet restore {{.SOLUTION}} --force-evaluate
-      - dotnet pack {{.ROOT_DIR}}/src/Cadence.Host --no-restore --configuration Release --output {{.ROOT_DIR}}/packages
+      - dotnet pack {{.ROOT_DIR}}/src/Cadence.Host --no-restore --configuration Release --output {{.ROOT_DIR}}/nupkgs
       - sh -c 'dotnet tool list --global | grep -q "^cadence.tool " && dotnet tool uninstall --global Cadence.Tool || true'
-      - dotnet tool install --global --add-source "{{.ROOT_DIR}}/packages" Cadence.Tool --version 0.1.1-local
+      - dotnet tool install --global --add-source "{{.ROOT_DIR}}/nupkgs" Cadence.Tool --version 0.1.1-local
 
   format:
     cmds:
@@ -48,7 +42,6 @@ tasks:
 
   check:
     cmds:
-      - task: prepare
       - dotnet restore {{.SOLUTION}} --force-evaluate
       - task: format:check
       - task: test

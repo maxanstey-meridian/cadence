@@ -161,7 +161,7 @@ public sealed class PacketValidator : AbstractValidator<Packet>
     }
 
     private static void ValidateCommands(
-        IReadOnlyList<PacketCommand>? commands,
+        IReadOnlyList<PacketCommandEntry>? commands,
         string property,
         string prefix,
         ValidationContext<Packet> context
@@ -231,6 +231,35 @@ public sealed class PacketValidator : AbstractValidator<Packet>
             if (string.IsNullOrWhiteSpace(command.Command))
             {
                 context.AddFailure($"{property}[{index}].Command", "Command is required.");
+            }
+            if (
+                command.Arguments is not null
+                && command.Arguments.Any(argument => argument is null)
+            )
+            {
+                context.AddFailure(
+                    $"{property}[{index}].Arguments",
+                    "Command arguments must not contain null values."
+                );
+            }
+            try
+            {
+                Tandem.Advanced.AgentCommand.Define(
+                    $"{prefix}{label}",
+                    "Admission validation.",
+                    command.Command ?? "",
+                    command.Arguments
+                );
+            }
+            catch (Exception exception)
+                when (exception is ArgumentException or ArgumentOutOfRangeException
+                    || exception.InnerException is not null
+                )
+            {
+                context.AddFailure(
+                    $"{property}[{index}].Arguments",
+                    exception.InnerException?.Message ?? exception.Message
+                );
             }
         }
     }

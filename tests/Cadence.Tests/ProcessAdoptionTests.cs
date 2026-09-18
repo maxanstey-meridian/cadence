@@ -177,7 +177,7 @@ public sealed class ProcessAdoptionTests
             var packet = TestSupport.Packet() with
             {
                 Repository = repository,
-                Verification = [new PacketCommand("test", command)],
+                Verification = [new PacketCommandEntry("test", command)],
             };
             var stage = new VerificationStage(
                 new VerificationOperation(new GitProcess(), timeout, outputBound)

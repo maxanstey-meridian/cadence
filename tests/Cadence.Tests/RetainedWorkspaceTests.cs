@@ -266,8 +266,8 @@ public sealed class RetainedWorkspaceTests
             Repository = repository,
             Verification =
             [
-                new PacketCommand("first", "test -f README.md"),
-                new PacketCommand("second", "test -f README.md"),
+                new PacketCommandEntry("first", "test -f README.md"),
+                new PacketCommandEntry("second", "test -f README.md"),
             ],
         };
         return CadenceState.Create(packet, candidate, repository) with

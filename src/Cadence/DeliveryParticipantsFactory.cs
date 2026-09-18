@@ -31,14 +31,16 @@ public sealed class CadenceParticipantsFactory(
                             AgentCommand.Define(
                                 $"run_verification_{command.Label}",
                                 $"Run diagnostic verification command {command.Label}: {command.Command}",
-                                command.Command
+                                command.Command,
+                                command.Arguments
                             )
                         ),
                         .. state.Packet.Commands.Select(command =>
                             AgentCommand.Define(
                                 $"run_command_{command.Label}",
                                 $"Run repository command {command.Label}: {command.Command}",
-                                command.Command
+                                command.Command,
+                                command.Arguments
                             )
                         ),
                     ]

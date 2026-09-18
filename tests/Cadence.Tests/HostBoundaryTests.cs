@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Cadence.Host;
 using FluentAssertions;
 using Microsoft.Extensions.AI;
+using Tandem.Advanced;
 using Tandem.Ledger;
 using Tandem.OpenAICompatible;
 using Tandem.Packets;
@@ -479,19 +480,96 @@ public sealed class HostBoundaryTests
             packet
                 .Commands.Should()
                 .Equal(
-                    new PacketCommand("generate", "task generate"),
-                    new PacketCommand("contracts", "task contracts")
+                    new PacketCommandEntry("generate", "task generate"),
+                    new PacketCommandEntry("contracts", "task contracts")
                 );
             packet
                 .Verification.Should()
                 .Equal(
-                    new PacketCommand("test-1", "dotnet test"),
-                    new PacketCommand("test-2", "dotnet test")
+                    new PacketCommandEntry("test-1", "dotnet test"),
+                    new PacketCommandEntry("test-2", "dotnet test")
                 );
             packet
                 .Constraints.Should()
                 .Equal(new PacketConstraint("preserve-text", "Preserve exact text"));
             packet.ImplementationContext.Should().Be("Inspect first.\nThen implement.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Packet_reader_carries_declared_arguments_to_the_generated_tool_schema()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}");
+        var repository = Path.Combine(directory, "repository");
+        Directory.CreateDirectory(repository);
+        var packetPath = Path.Combine(directory, "packet.md");
+        try
+        {
+            var content = ValidPacket(repository, "")
+                .Replace(
+                    "constraints: []",
+                    "constraints: []\n"
+                        + "commands:\n"
+                        + "  - label: review\n"
+                        + "    command: review\n"
+                        + "    arguments:\n"
+                        + "      - \" --path \"\n"
+                        + "      - src/review.cs",
+                    StringComparison.Ordinal
+                )
+                .Replace(
+                    "    command: dotnet test",
+                    "    command: dotnet test\n"
+                        + "    arguments:\n"
+                        + "      - --filter\n"
+                        + "      - Core",
+                    StringComparison.Ordinal
+                );
+            File.WriteAllText(packetPath, content);
+
+            var packet = PacketReader.Read(packetPath);
+
+            packet.Commands.Should().ContainSingle().Which.Label.Should().Be("review");
+            packet.Commands.Single().Command.Should().Be("review");
+            packet.Commands.Single().Arguments.Should().Equal("--path", "src/review.cs");
+            packet
+                .Verification.Should()
+                .ContainSingle()
+                .Which.Arguments.Should()
+                .Equal("--filter", "Core");
+
+            // The same mapping DeliveryParticipantsFactory performs, exercised through
+            // Tandem's public admission surface; the tool schema itself is proven by
+            // Tandem's PacketCommandAdmission_CarriesOptionalArgumentsThroughToTheToolSchema.
+            _ = AgentWorkspace<string>.Define(
+                _ => directory,
+                [
+                    .. packet
+                        .Verification.Select(command =>
+                            AgentCommand.Define(
+                                $"run_verification_{command.Label}",
+                                $"Run diagnostic verification command {command.Label}: {command.Command}",
+                                command.Command,
+                                command.Arguments
+                            )
+                        )
+                        .ToArray(),
+                    .. packet
+                        .Commands.Select(command =>
+                            AgentCommand.Define(
+                                $"run_command_{command.Label}",
+                                $"Run repository command {command.Label}: {command.Command}",
+                                command.Command,
+                                command.Arguments
+                            )
+                        )
+                        .ToArray(),
+                ]
+            );
         }
         finally
         {
@@ -615,6 +693,35 @@ public sealed class HostBoundaryTests
             .Contain(problem => problem.Path == "$.verification[0].command");
     }
 
+    [Theory]
+    [InlineData("    arguments:\n      - \" \"\n", "must not be blank.")]
+    [InlineData(
+        "    arguments:\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n      - x\n",
+        "accepts at most 16 arguments."
+    )]
+    [InlineData("    arguments:\n      - @OVERLONG@\n", "must be at most 200 characters.")]
+    public void Packet_reader_rejects_declared_arguments_outside_tandem_bounds(
+        string arguments,
+        string message
+    )
+    {
+        var overlong = new string('x', 201);
+        var content = ValidPacket(Path.GetTempPath(), "")
+            .Replace(
+                "    command: dotnet test",
+                "    command: dotnet test\n"
+                    + arguments.Replace("@OVERLONG@", overlong, StringComparison.Ordinal),
+                StringComparison.Ordinal
+            );
+
+        var act = () => PacketFile.Parse(content, new PacketValidator(), "packet.md");
+
+        act.Should()
+            .Throw<PacketFileException>()
+            .Which.Problems.Should()
+            .Contain(problem => problem.Message.Contains(message, StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Checked_in_example_parses_through_the_production_reader()
     {
@@ -623,8 +730,8 @@ public sealed class HostBoundaryTests
         var packet = PacketReader.Read(Path.Combine(root, "examples", "packet.md"));
 
         packet.Repository.Should().Be(root);
-        packet.Commands.Should().Equal(new PacketCommand("format", "task format"));
-        packet.Verification.Should().Equal(new PacketCommand("check", "task check"));
+        packet.Commands.Should().Equal(new PacketCommandEntry("format", "task format"));
+        packet.Verification.Should().Equal(new PacketCommandEntry("check", "task check"));
         packet.ImplementationContext.Should().Contain("host boundary tests");
     }
 
@@ -856,10 +963,10 @@ public sealed class HostBoundaryTests
             accepted.Should().NotBeNull();
             accepted!
                 .Value.Packet.Commands.Should()
-                .Equal(new PacketCommand("retained-command", "retained command"));
+                .Equal(new PacketCommandEntry("retained-command", "retained command"));
             accepted
                 .Value.Packet.Verification.Should()
-                .Equal(new PacketCommand("retained-verification", "retained verification"));
+                .Equal(new PacketCommandEntry("retained-verification", "retained verification"));
             accepted.Value.OperatorInstruction.Should().Be("Preserve retained work.");
         }
         finally
@@ -1039,13 +1146,13 @@ public sealed class HostBoundaryTests
             accepted!
                 .Value.Packet.Commands.Should()
                 .Equal(
-                    new PacketCommand("install-dependencies", "pnpm install"),
-                    new PacketCommand("repository-only", "task repository-only"),
-                    new PacketCommand("generate-contracts", "task contracts")
+                    new PacketCommandEntry("install-dependencies", "pnpm install"),
+                    new PacketCommandEntry("repository-only", "task repository-only"),
+                    new PacketCommandEntry("generate-contracts", "task contracts")
                 );
             accepted
                 .Value.Packet.Verification.Should()
-                .Equal(new PacketCommand("test", "dotnet test"));
+                .Equal(new PacketCommandEntry("test", "dotnet test"));
             accepted.Value.LatestCheckpoint.Should().BeNull();
             accepted.Value.PlannerConstraints.Should().BeEmpty();
             executor
@@ -1355,8 +1462,12 @@ public sealed class HostBoundaryTests
                 Repositories: new Dictionary<string, RepositoryConfiguration>
                 {
                     [Path.Combine(repository, ".")] = new(
-                        Commands: [new("install", "default install"), new("generate", "generate")],
-                        Verification: [new("check", "default check")]
+                        Commands:
+                        [
+                            new("install", "default install", [" --verbose"]),
+                            new("generate", "generate"),
+                        ],
+                        Verification: [new("check", "default check", [" --verbose"])]
                     ),
                 }
             );
@@ -1375,16 +1486,19 @@ public sealed class HostBoundaryTests
             packet
                 .Commands.Should()
                 .Equal(
-                    new PacketCommand("install", "packet install"),
-                    new PacketCommand("generate", "generate"),
-                    new PacketCommand("finish", "finish")
+                    new PacketCommandEntry("install", "packet install"),
+                    new PacketCommandEntry("generate", "generate"),
+                    new PacketCommandEntry("finish", "finish")
                 );
             packet
                 .Verification.Should()
-                .Equal(
-                    new PacketCommand("check", "default check"),
-                    new PacketCommand("test", "dotnet test")
-                );
+                .ContainSingle(command => command.Label == "check")
+                .Which.Arguments.Should()
+                .Equal("--verbose");
+            packet
+                .Verification.Select(command => (command.Label, command.Command))
+                .Should()
+                .Equal(("check", "default check"), ("test", "dotnet test"));
         }
         finally
         {
@@ -1449,7 +1563,7 @@ public sealed class HostBoundaryTests
             PacketReader
                 .Read(path, configuration)
                 .Verification.Should()
-                .Equal(new PacketCommand("check", "task check"));
+                .Equal(new PacketCommandEntry("check", "task check"));
             var act = () => PacketReader.Read(path);
             act.Should()
                 .Throw<InvalidOperationException>()
@@ -1621,7 +1735,7 @@ public sealed class HostBoundaryTests
             File.WriteAllText(unmatchedPath, ValidPacket(unmatched, ""));
             var packet = PacketReader.Read(unmatchedPath, configuration);
             packet.Commands.Should().BeEmpty();
-            packet.Verification.Should().Equal(new PacketCommand("test", "dotnet test"));
+            packet.Verification.Should().Equal(new PacketCommandEntry("test", "dotnet test"));
 
             var duplicatePath = Path.Combine(root, "duplicate.md");
             File.WriteAllText(
@@ -1786,15 +1900,15 @@ public sealed class HostBoundaryTests
             persisted
                 .Value.Packet.Commands.Should()
                 .Equal(
-                    new PacketCommand("replace", "packet replace"),
-                    new PacketCommand("repository", "repository command"),
-                    new PacketCommand("packet", "packet command")
+                    new PacketCommandEntry("replace", "packet replace"),
+                    new PacketCommandEntry("repository", "repository command"),
+                    new PacketCommandEntry("packet", "packet command")
                 );
             persisted
                 .Value.Packet.Verification.Should()
                 .Equal(
-                    new PacketCommand("test", "dotnet test"),
-                    new PacketCommand("repository-check", "repository check")
+                    new PacketCommandEntry("test", "dotnet test"),
+                    new PacketCommandEntry("repository-check", "repository check")
                 );
         }
         finally

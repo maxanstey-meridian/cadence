@@ -2,9 +2,9 @@
 **/obj/
 .idea/
 .vscode/
-packages/
 TestResults/
 /.cadence/
 /config.json
 /reviewer-doctrine.md
 .threadkeeper.sqlite3*
+nupkgs/

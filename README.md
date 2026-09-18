@@ -294,19 +294,13 @@ retained packet's source repository.
 ## Prepare Tandem
 
 Cadence consumes `Tandem`, `Tandem.Advanced`, `Tandem.Generators`, `Tandem.Ledger`,
-`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` through package references.
-Until those packages are published, refresh the ignored local feed:
-
-```sh
-task prepare
-```
-
-Set `TANDEM_REPOSITORY` or `TANDEM_VERSION` to override the local repository and package
-version. Cadence has no Tandem source-project reference.
+`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` as NuGet packages from
+nuget.org, pinned by `TandemVersion` in `Directory.Build.props`. `dotnet restore` resolves
+them with no extra setup.
 
 ## Run
 
-Install the CLI from the local source and package feed:
+Install the CLI from the resolved packages:
 
 ```sh
 task install
@@ -367,7 +361,7 @@ task check
 ```
 
 Use `task test`, `task build`, `task format`, or `task format:check` for individual
-checks. `task check` refreshes the local Tandem packages, checks formatting and
+checks. `task check` checks formatting and
 analyzers, runs the tests, builds with warnings as errors, and checks the repository's
 architecture rules.
 

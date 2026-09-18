@@ -27,7 +27,7 @@ public sealed class LifecycleFeatureProofTests
             var packet = TestSupport.Packet() with
             {
                 Repository = repository,
-                Verification = [new PacketCommand("test", "true")],
+                Verification = [new PacketCommandEntry("test", "true")],
             };
             var state = CadenceState.Create(packet, candidate, workspace) with
             {
@@ -149,7 +149,7 @@ public sealed class LifecycleFeatureProofTests
             var packet = TestSupport.Packet() with
             {
                 Repository = repository,
-                Verification = [new PacketCommand("existing-behavior", "test -f README.md")],
+                Verification = [new PacketCommandEntry("existing-behavior", "test -f README.md")],
             };
             var state = CadenceState
                 .Create(packet, TestSupport.Head(repository), repository)

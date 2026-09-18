@@ -164,13 +164,20 @@ internal sealed record HostConfiguration(
         };
     }
 
-    private static IReadOnlyList<PacketCommand> Merge(
-        IReadOnlyList<PacketCommand> defaults,
-        IReadOnlyList<PacketCommand> authored
+    private static IReadOnlyList<PacketCommandEntry> Merge(
+        IReadOnlyList<PacketCommandEntry> defaults,
+        IReadOnlyList<PacketCommandEntry> authored
     )
     {
         var merged = defaults
-            .Select(command => new PacketCommand(command.Label.Trim(), command.Command.Trim()))
+            .Select(command => new PacketCommandEntry(
+                command.Label.Trim(),
+                command.Command.Trim(),
+                command
+                    .Arguments?.Where(argument => argument is not null)
+                    .Select(argument => argument.Trim())
+                    .ToArray()
+            ))
             .ToList();
         var positions = merged
             .Select((command, index) => (command.Label, index))
@@ -251,8 +258,8 @@ internal static class RepositoryPathIdentity
 
 internal sealed record RepositoryConfiguration(
     IReadOnlyList<string>? SkillDirectories = null,
-    IReadOnlyList<PacketCommand>? Commands = null,
-    IReadOnlyList<PacketCommand>? Verification = null
+    IReadOnlyList<PacketCommandEntry>? Commands = null,
+    IReadOnlyList<PacketCommandEntry>? Verification = null
 );
 
 internal sealed record ProviderConfiguration(

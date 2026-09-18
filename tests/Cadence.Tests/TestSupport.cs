@@ -17,7 +17,7 @@ internal static class TestSupport
             "/source",
             "main",
             [new PacketOutcome("outcome-1", "Deliver the feature")],
-            [new PacketCommand("test", "dotnet test")],
+            [new PacketCommandEntry("test", "dotnet test")],
             [],
             "Inspect the implementation."
         );
