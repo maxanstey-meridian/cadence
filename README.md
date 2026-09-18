@@ -204,7 +204,8 @@ Cadence reads `$CADENCE_HOME/config.json`, defaulting to `~/.cadence/config.json
     "local": {
       "baseUrl": "http://localhost:11434/v1",
       "apiKeyEnvironmentVariable": null,
-      "wireApi": "completions"
+      "wireApi": "completions",
+      "reasoningExtraction": "reasoning"
     }
   },
   "profiles": {
@@ -240,6 +241,10 @@ Cadence reads `$CADENCE_HOME/config.json`, defaulting to `~/.cadence/config.json
 independently of lifecycle checkpoints. `checkpointAtPercent` controls Executor checkpointing;
 Planner and Reviewer do not emit Executor checkpoints. Planner retains its conversation with
 the configured compaction policy.
+
+`reasoningExtraction` is `"default"` when omitted. Set `"reasoning"` on a completions-wire
+provider whose endpoint emits reasoning in a non-standard field such as `delta.reasoning`
+(OpenRouter, Ollama's OpenAI-compatible endpoint); otherwise the SDK silently discards it.
 
 Planner constraints persist across approvals, keyed by ID. Reusing an ID explicitly replaces
 that requirement; omitting an ID does not remove it. The assessed request survives outcome updates

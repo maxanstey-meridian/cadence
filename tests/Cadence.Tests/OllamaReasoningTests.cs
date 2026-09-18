@@ -13,10 +13,86 @@ public sealed class OllamaReasoningTests
     [Fact(Timeout = 30_000)]
     public async Task Ollama_stream_preserves_reasoning_and_uses_provider_default_effort()
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        var (listener, request) = await StartReasoningServer(TestContext.Current.CancellationToken);
+        using var listenerScope = listener;
+        var config = new HostConfiguration(
+            new Dictionary<string, ProviderConfiguration>
+            {
+                ["local"] = new(
+                    $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/v1",
+                    null,
+                    "completions",
+                    "reasoning"
+                ),
+            },
+            new Dictionary<string, ProfileConfiguration>
+            {
+                ["executor"] = new("local", "glm-5.3-flash:cloud", 4096, 256, 80),
+            },
+            "reviewer.md"
+        );
+        using var client = new ConfiguredChatClients(config).Build("executor");
+        var contents = new List<AIContent>();
+        await foreach (
+            var update in client.GetStreamingResponseAsync(
+                [new ChatMessage(ChatRole.User, "What is 17 times 23?")],
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )
+        {
+            contents.AddRange(update.Contents);
+        }
+        contents
+            .OfType<TextReasoningContent>()
+            .Select(x => x.Text)
+            .Should()
+            .Equal("Check the product.");
+        string.Concat(contents.OfType<TextContent>().Select(x => x.Text)).Should().Be("391");
+        using var parsed = JsonDocument.Parse(await request);
+        parsed.RootElement.TryGetProperty("reasoning_effort", out _).Should().BeFalse();
+        parsed.RootElement.TryGetProperty("reasoning", out _).Should().BeFalse();
+    }
+
+    [Fact(Timeout = 30_000)]
+    public async Task Reasoning_field_is_discarded_without_declared_extraction()
+    {
+        var (listener, _) = await StartReasoningServer(TestContext.Current.CancellationToken);
+        using var listenerScope = listener;
+        var config = new HostConfiguration(
+            new Dictionary<string, ProviderConfiguration>
+            {
+                ["local"] = new(
+                    $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/v1",
+                    null
+                ),
+            },
+            new Dictionary<string, ProfileConfiguration>
+            {
+                ["executor"] = new("local", "glm-5.3-flash:cloud", 4096, 256, 80),
+            },
+            "reviewer.md"
+        );
+        using var client = new ConfiguredChatClients(config).Build("executor");
+        var contents = new List<AIContent>();
+        await foreach (
+            var update in client.GetStreamingResponseAsync(
+                [new ChatMessage(ChatRole.User, "What is 17 times 23?")],
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        )
+        {
+            contents.AddRange(update.Contents);
+        }
+        contents.OfType<TextReasoningContent>().Should().BeEmpty();
+        string.Concat(contents.OfType<TextContent>().Select(x => x.Text)).Should().Be("391");
+    }
+
+    private static async Task<(TcpListener Listener, Task<string> Request)> StartReasoningServer(
+        CancellationToken cancellation
+    )
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var cancellation = TestContext.Current.CancellationToken;
         var server = Task.Run(
             async () =>
             {
@@ -43,36 +119,6 @@ public sealed class OllamaReasoningTests
             },
             cancellation
         );
-        var config = new HostConfiguration(
-            new Dictionary<string, ProviderConfiguration>
-            {
-                ["ollama"] = new($"http://127.0.0.1:{port}/v1", null, "completions"),
-            },
-            new Dictionary<string, ProfileConfiguration>
-            {
-                ["executor"] = new("ollama", "glm-5.3-flash:cloud", 4096, 256, 80),
-            },
-            "reviewer.md"
-        );
-        using var client = new ConfiguredChatClients(config).Build("executor");
-        var contents = new List<AIContent>();
-        await foreach (
-            var update in client.GetStreamingResponseAsync(
-                [new ChatMessage(ChatRole.User, "What is 17 times 23?")],
-                cancellationToken: cancellation
-            )
-        )
-        {
-            contents.AddRange(update.Contents);
-        }
-        contents
-            .OfType<TextReasoningContent>()
-            .Select(x => x.Text)
-            .Should()
-            .Equal("Check the product.");
-        string.Concat(contents.OfType<TextContent>().Select(x => x.Text)).Should().Be("391");
-        using var request = JsonDocument.Parse(await server);
-        request.RootElement.TryGetProperty("reasoning_effort", out _).Should().BeFalse();
-        request.RootElement.TryGetProperty("reasoning", out _).Should().BeFalse();
+        return (listener, server);
     }
 }

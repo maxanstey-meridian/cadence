@@ -79,16 +79,15 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
             ),
         };
 #pragma warning restore OPENAI001
-        if (
-            provider.WireApi == "completions"
-            && (
-                profile.Provider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
-                || endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
-                || endpoint.Host.EndsWith(".openrouter.ai", StringComparison.OrdinalIgnoreCase)
-            )
-        )
+        if (provider.ReasoningExtraction is not "reasoning" and not "default")
         {
-            chatClient = new OpenRouterReasoningChatClient(chatClient);
+            throw new InvalidOperationException(
+                $"Provider '{profile.Provider}' reasoningExtraction must be 'reasoning' or 'default'."
+            );
+        }
+        if (provider.ReasoningExtraction == "reasoning" && provider.WireApi == "completions")
+        {
+            chatClient = new ReasoningExtractionChatClient(chatClient);
         }
         if (profile.ReasoningEffort is not null)
         {

@@ -60,7 +60,12 @@ public sealed class HostBoundaryTests
         var configuration = new HostConfiguration(
             new Dictionary<string, ProviderConfiguration>
             {
-                ["openrouter"] = new("https://openrouter.ai/api/v1", "CADENCE_TEST_OPENROUTER_KEY"),
+                ["openrouter"] = new(
+                    "https://openrouter.ai/api/v1",
+                    "CADENCE_TEST_OPENROUTER_KEY",
+                    "completions",
+                    "reasoning"
+                ),
                 ["local"] = new("http://127.0.0.1:10531/v1", null, "responses"),
             },
             new Dictionary<string, ProfileConfiguration>
@@ -78,7 +83,7 @@ public sealed class HostBoundaryTests
             var clients = new ConfiguredChatClients(configuration);
             var executor = clients.Build("executor");
             executor.Should().BeOfType<StreamRetryChatClient>();
-            executor.GetService<OpenRouterReasoningChatClient>().Should().NotBeNull();
+            executor.GetService<ReasoningExtractionChatClient>().Should().NotBeNull();
             executor.GetService<ChatClientMetadata>()!.DefaultModelId.Should().Be("deepseek/model");
             clients
                 .Build("planner")

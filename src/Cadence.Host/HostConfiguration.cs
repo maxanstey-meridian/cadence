@@ -258,7 +258,8 @@ internal sealed record RepositoryConfiguration(
 internal sealed record ProviderConfiguration(
     string BaseUrl,
     string? ApiKeyEnvironmentVariable,
-    string WireApi = "completions"
+    string WireApi = "completions",
+    string ReasoningExtraction = "default"
 );
 
 internal sealed record ProfileConfiguration(
