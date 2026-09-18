@@ -19,7 +19,9 @@ public sealed class ArchitectureTests
             .Select(reference => (string?)reference.Attribute("Include"))
             .ToArray();
 
-        packageNames.Should().Contain(["Tandem", "Tandem.Advanced", "Tandem.Generators"]);
+        packageNames
+            .Should()
+            .Contain(["Meridian.Tandem", "Meridian.Tandem.Advanced", "Meridian.Tandem.Generators"]);
         projectReferences
             .Any(reference =>
                 reference is not null
@@ -32,7 +34,7 @@ public sealed class ArchitectureTests
         var hostPackages = host.Descendants("PackageReference")
             .Select(reference => (string?)reference.Attribute("Include"))
             .ToArray();
-        hostPackages.Should().Contain("Tandem.Packets");
+        hostPackages.Should().Contain("Meridian.Tandem.Packets");
         hostPackages.Should().NotContain("YamlDotNet");
     }
 

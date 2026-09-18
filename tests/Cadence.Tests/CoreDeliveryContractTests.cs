@@ -345,6 +345,70 @@ public sealed class CoreDeliveryContractTests
     }
 
     [Fact]
+    public void Authorizing_proceeds_accumulate_and_amend_constraints_without_dropping_prior_slices()
+    {
+        var first = new PlannerDecision(
+            PlannerDecisionValue.Proceed,
+            "Grounded first slice",
+            [new("preserve-api", "Preserve the public API")],
+            ["src/file.cs: fact"],
+            "Implement slice one"
+        );
+        var second = new PlannerDecision(
+            PlannerDecisionValue.Proceed,
+            "Grounded second slice",
+            [
+                new("preserve-tests", "Preserve test semantics"),
+                new("preserve-api", "Explicitly revised requirement"),
+            ],
+            ["src/other.cs: fact"],
+            "Implement slice two"
+        );
+
+        var state = TestSupport.State().RecordPlannerDecision(first);
+        state.PlannerConstraints.Should().Equal(first.Constraints);
+        state = state.RecordPlannerDecision(second);
+        state
+            .PlannerConstraints.Should()
+            .Equal(
+                new PlannerConstraint("preserve-api", "Explicitly revised requirement"),
+                new PlannerConstraint("preserve-tests", "Preserve test semantics")
+            );
+
+        var revise = second with
+        {
+            Decision = PlannerDecisionValue.ReviseApproach,
+            Constraints = [],
+            CorrectedApproach = "Corrected",
+        };
+        state
+            .RecordPlannerDecision(revise)
+            .PlannerConstraints.Should()
+            .Equal(state.PlannerConstraints);
+        state
+            .RecordPlannerDecision(
+                second with
+                {
+                    Decision = PlannerDecisionValue.NeedsHuman,
+                    HumanQuestion = "Proceed with the revised requirement?",
+                    HumanDecisionDomain = HumanDecisionDomain.Product,
+                }
+            )
+            .PlannerConstraints.Should()
+            .Equal(state.PlannerConstraints);
+        state
+            .RecordPlannerDecision(
+                second with
+                {
+                    Decision = PlannerDecisionValue.Stop,
+                    Constraints = [],
+                }
+            )
+            .PlannerConstraints.Should()
+            .Equal(state.PlannerConstraints);
+    }
+
+    [Fact]
     public void State_initializes_continuity_from_the_injected_clock()
     {
         var expected = new DateTimeOffset(2030, 1, 2, 3, 4, 5, TimeSpan.Zero);

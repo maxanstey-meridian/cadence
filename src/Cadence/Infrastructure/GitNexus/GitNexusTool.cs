@@ -49,7 +49,21 @@ internal static class GitNexusTool
                 AIFunctionFactory.Create(
                     new GitNexusRepository(workspacePath).RunAsync,
                     Name,
-                    "Run an allowed GitNexus repository-analysis command in the current workspace. GitNexus CLI options are version-dependent: before supplying flags, call the same subcommand with arguments [\"--help\"] and use only the options it reports. Never infer flag names from memory. Use status/analyze to prepare an index, impact before editing symbols, and detect-changes before reporting completion."
+                    """
+                    Run an allowed GitNexus repository-analysis command in the current workspace.
+                    Repository identity is bound automatically; do not pass identity flags.
+                    Common argument hints (verify with ["--help"] if unsure):
+                      impact <symbol> [--direction upstream|downstream]
+                      query <text> [--limit n] [--context text]
+                      context <symbol> [--file path] [--limit n]
+                      detect-changes [--scope unstaged|staged|all|compare] [--base-ref ref]
+                      trace <from> <to> [--depth n]
+                      status (no arguments)
+                      check [--cycles] [--json]
+                      cypher <query> [--limit n]
+                    Use status/analyze to prepare an index, impact before editing symbols, and
+                    detect-changes before reporting completion.
+                    """
                 ),
             ToolEffect.ProcessExecution,
             ToolEvidence.RepositoryInspection
@@ -162,29 +176,43 @@ internal sealed class GitNexusRepository(
         )]
             string subcommand,
         [Description(
-            "Arguments passed directly to GitNexus without shell interpretation. Before supplying flags, first call this subcommand with [\"--help\"] and use only its reported options; never infer flag names from memory."
+            "Arguments passed directly to GitNexus without shell interpretation, e.g. impact: [\"Symbol\", \"--direction\", \"upstream\"]; detect-changes: [\"--scope\", \"all\"]. Verify a subcommand's exact options with [\"--help\"] if unsure."
         )]
             string[]? arguments = null,
         CancellationToken cancellationToken = default
     )
     {
-        var result = await _execute(
-            BuildStartInfo(_workspacePath, subcommand, arguments ?? []),
-            cancellationToken
-        );
+        ProcessStartInfo startInfo;
+        try
+        {
+            startInfo = BuildStartInfo(_workspacePath, subcommand, arguments ?? []);
+        }
+        catch (ArgumentException exception)
+        {
+            return $"Error: {exception.Message} Correct the GitNexus arguments and retry; no command was executed.";
+        }
+        var result = await _execute(startInfo, cancellationToken);
         if (result.ExitCode != 0 && subcommand != "analyze" && IsRepositoryMissing(result))
         {
             var analyze = await _execute(
                 BuildStartInfo(_workspacePath, "analyze", []),
                 cancellationToken
             );
-            EnsureSucceeded("analyze", analyze);
+            if (analyze.ExitCode != 0)
+            {
+                return $"Error: GitNexus analyze failed. {FormatResult(analyze)}";
+            }
+
             result = await _execute(
                 BuildStartInfo(_workspacePath, subcommand, arguments ?? []),
                 cancellationToken
             );
         }
-        EnsureSucceeded(subcommand, result);
+        if (result.ExitCode != 0)
+        {
+            return $"Error: GitNexus {subcommand} failed. Correct the command using its help output. {FormatResult(result)}";
+        }
+
         return FormatResult(result);
     }
 
@@ -250,16 +278,6 @@ internal sealed class GitNexusRepository(
         var output = $"{result.Stdout}\n{result.Stderr}";
         return output.Contains("Repository", StringComparison.OrdinalIgnoreCase)
             && output.Contains("not found", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static void EnsureSucceeded(string subcommand, GitNexusProcessResult result)
-    {
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"GitNexus '{subcommand}' failed.\n{FormatResult(result)}"
-            );
-        }
     }
 
     private static string FormatResult(GitNexusProcessResult result)

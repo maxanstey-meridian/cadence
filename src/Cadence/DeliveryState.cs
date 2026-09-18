@@ -25,6 +25,7 @@ public sealed record CadenceState(
 )
 {
     public bool ResumeRequested { get; init; }
+    public AskPlannerRequest? CurrentPlannerRequest { get; init; }
     public DateTimeOffset LastContinuityAt { get; init; }
     public IReadOnlyList<OutcomeProgress> OutcomeProgress { get; init; } = [];
     public bool ReviewRepairRequired { get; init; }
@@ -89,13 +90,27 @@ public sealed record CadenceState(
             ))
             .ToArray();
 
-    public CadenceState RecordPlannerDecision(PlannerDecision decision) =>
+    public CadenceState RecordPlannerDecision(
+        PlannerDecision decision,
+        DateTimeOffset? authorizedAt = null
+    ) =>
         this with
         {
             PlannerDecision = decision,
+            CurrentPlannerRequest =
+                CurrentPlannerRequest
+                ?? (ExecutorTransition as ExecutorTransition.PlannerRequested)?.Request,
+            LastContinuityAt =
+                decision.Decision == PlannerDecisionValue.Proceed
+                    ? authorizedAt ?? DateTimeOffset.UtcNow
+                    : LastContinuityAt,
             PlannerConstraints =
                 decision.Decision == PlannerDecisionValue.Proceed
-                    ? decision.Constraints
+                    ? PlannerConstraints
+                        .Concat(decision.Constraints)
+                        .GroupBy(x => x.Id, StringComparer.Ordinal)
+                        .Select(group => group.Last())
+                        .ToArray()
                     : PlannerConstraints,
             MutationAuthorized = decision.Decision == PlannerDecisionValue.Proceed,
             PlannerFailureCount = 0,
@@ -127,6 +142,7 @@ public sealed record CadenceState(
             MutationAuthorized = false,
             PlannerFailureCount = 0,
             ExecutorTransition = new ExecutorTransition.PlannerRequested(request),
+            CurrentPlannerRequest = request,
         };
 
     public CadenceState RecordPlannerFailure() =>

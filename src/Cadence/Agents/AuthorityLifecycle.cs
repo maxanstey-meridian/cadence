@@ -5,18 +5,13 @@ internal static class AuthorityLifecycle
     internal const string ExecutorMatrix = """
         Mutation authority is an invocation-scoped, revocable lease. It determines which
         workspace tools are visible, not which capabilities the Executor permanently has.
+        The visible tool list for this invocation is the mechanical truth; it is assembled
+        from your registered tool set and changes with authority.
 
-        When unauthorized (Mutation authorized: false):
-          Read-only tools are visible: file_access_read, file_access_ls, file_access_grep,
-          git_status, git_diff, git_log, git_show, git_blame, git_changed_files,
-          git_compare, and gitnexus.
-          Mutation tools are not visible: file_access_write, file_access_delete,
-          file_access_replace, file_access_replace_lines, file_access_copy,
-          file_access_move, file_access_create_directory.
-
-        When authorized (Mutation authorized: true):
-          All read-only tools above, fixed packet commands, diagnostic packet verification
-          commands, and every mutation tool listed above are visible.
+        When unauthorized, read-only repository inspection tools (file reads, listing,
+        search, read-only Git, and gitnexus) are visible; mutation tools are not.
+        When authorized, mutation tools, fixed packet commands, and diagnostic packet
+        verification commands become visible alongside the read-only set.
 
         How authority changes:
           ask_planner closes authority and routes to Planner. Planner Proceed opens

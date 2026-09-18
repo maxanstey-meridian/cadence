@@ -53,7 +53,7 @@ internal sealed class AskPlannerCapability
 {
     public string ToolName => "ask_planner";
     public string Instructions =>
-        "Request Planner authorization for a concrete repository-grounded approach when mutation authority is closed, or escalate consequential unresolved engineering direction when new evidence invalidates the accepted approach. Ends the turn. Do not use for progress reports, check-ins, reassurance, or routine implementation decisions.";
+        "Request Planner authorization when mutation authority is closed or the next approach falls outside existing approval, or escalate consequential unresolved engineering direction when new evidence invalidates the accepted approach. The request is one bounded slice: CurrentSlice names the bounded work and ProposedApproach describes its repository-grounded changes and checks, including its necessary dependencies; respect the full final contract but do not detail-plan unrelated outcomes. Describe intended mutations as authorization requests (\"I need authorization to X\"), never as missing capabilities (\"I lack the capability to X\"). Ends the turn. Do not use for progress reports, check-ins, reassurance, or routine implementation decisions.";
     public FluentValidation.IValidator<AskPlannerRequest> Validator { get; } =
         new AskPlannerRequestValidator();
 
@@ -65,7 +65,7 @@ internal sealed class UpdateOutcomesCapability
 {
     public string ToolName => "update_outcomes";
     public string Instructions =>
-        "Replace one or more durable outcome-progress entries and end the turn. Use when established repository evidence materially changes an outcome's durable status, evidence, or remaining work.";
+        "Replace one or more durable outcome-progress entries and end the turn. Use when established repository evidence materially changes an outcome's durable status, evidence, or remaining work. Partial work remains in progress; record what remains before continuing to the next piece. These notes are continuity claims, not proof of completion.";
     public FluentValidation.IValidator<UpdateOutcomesRequest> Validator { get; } =
         new UpdateOutcomesRequestValidator();
 
@@ -80,7 +80,7 @@ internal sealed class SubmitReportCapability(DirtyWorkCheckpointPolicy dirty)
 {
     public string ToolName => "submit_report";
     public string Instructions =>
-        "Submit the implementation report and end the turn. The report records Executor claims about the delivered implementation and the concrete repository evidence supporting them; acceptance of the report does not substitute for Planner or Reviewer inspection.";
+        "Submit the implementation report only when every outcome and obligation in the complete final delivery contract is satisfied, not when just the current slice is finished. Ends the turn. The report records Executor claims about the delivered implementation and the concrete repository evidence supporting them; acceptance of the report does not substitute for Planner or Reviewer inspection.";
     public FluentValidation.IValidator<SubmitReportRequest> Validator { get; } =
         new SubmitReportRequestValidator();
 
@@ -94,7 +94,8 @@ internal sealed class WriteCheckpointCapability
     : IAgentCapabilityDefinition<CadenceState, WriteCheckpointRequest>
 {
     public string ToolName => "write_checkpoint";
-    public string Instructions => "Checkpoint current work and route through Planner.";
+    public string Instructions =>
+        "Checkpoint the current slice, progress and remaining work within it, relevant uncertainties, and one precise next action; route through Planner for reauthorization. Preserve continuity without restarting whole-packet investigation.";
     public FluentValidation.IValidator<WriteCheckpointRequest> Validator { get; } =
         new WriteCheckpointRequestValidator();
 

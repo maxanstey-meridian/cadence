@@ -295,11 +295,15 @@ public sealed class GitNexusToolTests
             (_, _) => Task.FromResult(new GitNexusProcessResult(2, new string('x', 200_000), "bad"))
         );
 
-        var run = () => repository.RunAsync("status", [], TestContext.Current.CancellationToken);
-
-        var exception = await run.Should().ThrowAsync<InvalidOperationException>();
-        exception.Which.Message.Should().Contain("failed").And.Contain("truncated by Cadence");
-        exception.Which.Message.Length.Should().BeLessThan(132_000);
+        var result = await repository.RunAsync("status", [], TestContext.Current.CancellationToken);
+        result.Should().StartWith("Error:").And.Contain("truncated by Cadence");
+        result.Length.Should().BeLessThan(132_000);
+        var invalid = await repository.RunAsync(
+            "unavailable-command",
+            [],
+            TestContext.Current.CancellationToken
+        );
+        invalid.Should().StartWith("Error:").And.Contain("not available");
     }
 
     private static string Workspace(string runId) =>

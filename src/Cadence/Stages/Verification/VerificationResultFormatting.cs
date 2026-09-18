@@ -16,5 +16,5 @@ internal static class VerificationResultFormatting
     private static string FormatStream(string value) =>
         value.Length <= MaximumStreamCharacters
             ? value
-            : $"[showing final {MaximumStreamCharacters} of {value.Length} characters]\n{value[^MaximumStreamCharacters..]}";
+            : $"[showing final {MaximumStreamCharacters} of {value.Length} characters; full captured output: search_ledger for the command label, then read_ledger_entry using the returned cursor and follow nextOffset]\n{value[^MaximumStreamCharacters..]}";
 }

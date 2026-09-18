@@ -113,32 +113,14 @@ public sealed class PlannerDecisionOutput : IAgentOutputDefinition<CadenceState,
 {
     public string Instructions =>
         """
-            Return a validated planning decision grounded in the packet, active constraints, current
-            lifecycle state, and repository facts established during this consultation. evidenceUsed
-            must record the source and material fact established from it, not merely name an artifact.
-            SafeNextAction records the immediate lifecycle consequence or continuity context. It must
-            not prescribe a local task sequence or substitute for the complete engineering direction.
+            Assess the bounded approach against the applicable packet requirements and active constraints.
+            Explain in rationale why the approach satisfies or fails those requirements, including material
+            gaps and unsupported premises. evidenceUsed must identify the source and decisive fact, and
+            support the assessment rather than merely catalogue inspected files. Reassess prior approvals
+            where their premises no longer hold. SafeNextAction is one immediate action consistent with
+            the decision, not a scope definition or implementation sequence. Authorization is not final
+            candidate acceptance.
             """;
 
     public IValidator<PlannerDecision> Validator { get; } = new PlannerDecisionValidator();
-
-    public IReadOnlyList<AgentOutputExample<PlannerDecision>> Examples(CadenceState state) =>
-        [
-            new(
-                state.Packet.Title,
-                new PlannerDecision(
-                    PlannerDecisionValue.ReviseApproach,
-                    "The proposed controller-only deletion cannot produce the complete packet outcome because the candidate would retain the legacy capability in its generated contract and runtime registration.",
-                    [],
-                    [
-                        "AuthenticationController.cs: the proposed deletion removes the controller action.",
-                        "generated/auth-client.ts and AuthModule.cs: the legacy capability remains in the public contract and runtime registration, so the packet outcome would remain incomplete.",
-                    ],
-                    "Executor must continue from a corrected direction that owns removal of the complete legacy capability rather than treating controller deletion as the delivery scope.",
-                    "Remove the legacy authentication capability across the complete candidate scope implied by the packet while preserving the required current route and response contract.",
-                    null,
-                    null
-                )
-            ),
-        ];
 }

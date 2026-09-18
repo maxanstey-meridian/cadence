@@ -55,10 +55,9 @@ internal static class ExecutorAgent
                             new HashSet<ToolEffect> { ToolEffect.WorkspaceMutation },
                             """
                             MUTATION GATE CLOSED: Your edit was NOT applied — no file was changed.
-                            Mutation authority is not yet granted. Establish enough repository state
-                            to present a concrete grounded approach, then call ask_planner with that
-                            approach and evidence. Reads remain available for establishing the required
-                            repository facts. Continue only on Proceed.
+                            Mutation authority is not yet granted. Propose the next bounded slice via
+                            ask_planner as described in its instructions. Reads remain available.
+                            Continue mutations only on Proceed.
                             """,
                             askPlanner
                         )

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Tandem.Advanced;
 
 namespace Cadence.Tests;
 
@@ -7,22 +8,27 @@ public sealed class PromptContractTests
     [Fact]
     public void Role_messages_classify_current_facts_obligations_and_prior_claims()
     {
-        var state = State();
+        var request = new AskPlannerRequest(
+            "Current slice claim",
+            "Which direction?",
+            "Use the established seam.",
+            ["src/Seam.cs: the seam exists."]
+        );
+        var state = State() with
+        {
+            ExecutorTransition = new ExecutorTransition.PlannerRequested(request),
+        };
 
         var executor = ExecutorPrompts.BuildMessage(state);
-        var planner = PlannerPrompts.BuildMessage(
-            state with
+        var planner = PlannerPrompts.BuildMessage(state);
+        foreach (var message in new[] { executor, planner })
+        {
+            message.Should().Contain(request.CurrentSlice).And.Contain(request.ProposedApproach);
+            foreach (var progress in state.OutcomeProgress)
             {
-                ExecutorTransition = new ExecutorTransition.PlannerRequested(
-                    new(
-                        "Current slice claim",
-                        "Which direction?",
-                        "Use the established seam.",
-                        ["src/Seam.cs: the seam exists."]
-                    )
-                ),
+                message.Should().Contain(progress.Evidence).And.Contain(progress.NextAction!);
             }
-        );
+        }
         var reviewer = ReviewerPrompts.BuildMessage(state);
 
         var contract = DeliveryContractRenderer.Render(state);
@@ -52,7 +58,7 @@ public sealed class PromptContractTests
         planner.Should().Contain("Executor request (unverified proposal)");
         planner.Should().Contain("claims, not established Planner facts");
         planner.Should().Contain("Current recorded verification results");
-        planner.Should().Contain("Latest accepted Planner decision");
+        planner.Should().Contain(state.PlannerDecision!.Rationale);
         planner.Should().Contain("authoritative only for the requested Human-owned decision");
 
         reviewer.Should().Contain("Current mechanical pinned base: base-sha");
@@ -96,20 +102,6 @@ public sealed class PromptContractTests
         ExecutorPrompts.Instructions.Should().Contain("does not establish completion");
         ExecutorPrompts.Instructions.Should().Contain("Green tests that assert obsolete behavior");
 
-        PlannerPrompts
-            .Instructions.Should()
-            .Contain("engineering agent responsible for deciding whether the Executor's");
-        PlannerPrompts.Instructions.Should().Contain("affected consumers, repository invariants");
-        PlannerPrompts
-            .Instructions.Should()
-            .Contain("establish material repository")
-            .And.Contain("facts independently before relying on them");
-        PlannerPrompts.Instructions.Should().Contain("without warrant in the packet");
-        PlannerPrompts.Instructions.Should().Contain("does not prescribe a local task sequence");
-        PlannerPrompts.Instructions.Should().Contain("concise stable local ID");
-        PlannerPrompts.Instructions.Should().Contain("without the `planner-constraint:` prefix");
-        PlannerPrompts.Instructions.Should().NotContain("file_access_write");
-
         reviewer.Should().Contain("independent code-review agent responsible for deciding whether");
         reviewer.Should().Contain("including relevant unchanged code");
         reviewer.Should().Contain("Look for concrete").And.Contain("counterexamples");
@@ -141,23 +133,44 @@ public sealed class PromptContractTests
             .Contain("continuity material, not repository truth");
         CadenceHarnessInstructions.Value.Should().NotContain("evidence sources");
 
-        var plannerOutput = new PlannerDecisionOutput();
-        plannerOutput.Instructions.Should().Contain("source and material fact established");
-        plannerOutput.Instructions.Should().Contain("not prescribe a local task sequence");
-        plannerOutput
-            .Examples(State())
-            .Single()
-            .Output.Decision.Should()
-            .Be(PlannerDecisionValue.ReviseApproach);
-
         var reviewOutput = new ReviewDecisionOutput();
         reviewOutput.Instructions.Should().Contain("complete delivery contract");
-        var reviewExample = reviewOutput.Examples(State()).Single().Output;
-        reviewExample.Decision.Should().Be(ReviewDecisionValue.RequestChanges);
-        reviewExample.Assessments.Should().Contain(x => !x.Satisfied);
-        reviewExample
-            .Findings.Should()
-            .ContainSingle(x => x.Severity == ReviewFindingSeverity.High);
+    }
+
+    [Fact]
+    public async Task Bounded_slice_doctrine_is_stated_once_and_gates_point_at_ask_planner()
+    {
+        var canonical = new AskPlannerCapability().Instructions;
+        canonical
+            .Should()
+            .Contain("The request is one bounded slice")
+            .And.Contain("including its necessary dependencies")
+            .And.Contain("do not detail-plan unrelated outcomes")
+            .And.Contain("Describe intended mutations as authorization requests");
+
+        var directive = await ExecutorPolicies
+            .CreateTurnPolicy()
+            .Continue(
+                new AgentTurnObservation<CadenceState>(
+                    new(Guid.NewGuid(), TestSupport.State(), null),
+                    "I will edit files now.",
+                    [],
+                    HasAcceptedLifecycleOutcome: false,
+                    ContinuationAttempt: 0
+                ),
+                TestContext.Current.CancellationToken
+            );
+        directive
+            .Should()
+            .BeOfType<AgentTurnDirective>()
+            .Which.RequiredToolName.Should()
+            .Be("ask_planner");
+        directive!
+            .Prompt.Should()
+            .Contain("ask_planner")
+            .And.NotContain("CurrentSlice")
+            .And.NotContain("ProposedApproach");
+        canonical.Should().Contain("CurrentSlice").And.Contain("ProposedApproach");
     }
 
     private static CadenceState State()

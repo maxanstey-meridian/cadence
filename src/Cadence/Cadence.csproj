@@ -10,10 +10,10 @@
             Include="Microsoft.Extensions.DependencyInjection.Abstractions"
             Version="10.0.10"
         />
-        <PackageReference Include="Tandem" Version="$(TandemVersion)" />
-        <PackageReference Include="Tandem.Advanced" Version="$(TandemVersion)" />
+        <PackageReference Include="Meridian.Tandem" Version="$(TandemVersion)" />
+        <PackageReference Include="Meridian.Tandem.Advanced" Version="$(TandemVersion)" />
         <PackageReference
-            Include="Tandem.Generators"
+            Include="Meridian.Tandem.Generators"
             Version="$(TandemVersion)"
             PrivateAssets="all"
         />

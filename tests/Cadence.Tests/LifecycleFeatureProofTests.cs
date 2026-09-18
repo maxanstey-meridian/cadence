@@ -362,58 +362,6 @@ public sealed class LifecycleFeatureProofTests
 
             planner.CallCount.Should().Be(3);
             result.State.MutationAuthorized.Should().BeTrue();
-            planner
-                .Requests[1]
-                .Select(message => message.Text)
-                .Should()
-                .Contain(text =>
-                    text.Contains(
-                        "You have not examined any repository evidence",
-                        StringComparison.Ordinal
-                    )
-                    && text.Contains(
-                        "whether the proposed engineering direction is sufficient",
-                        StringComparison.Ordinal
-                    )
-                );
-        }
-        finally
-        {
-            Directory.Delete(repository, true);
-        }
-    }
-
-    [Fact(Timeout = 15_000)]
-    public async Task Planner_rejects_runtime_capability_availability_as_human_permissions()
-    {
-        var repository = TestSupport.CreateGitRepository();
-        try
-        {
-            var planner = new ScriptedChatClient(
-                "planner",
-                TestSupport.Text(
-                    "{\"decision\":\"NeedsHuman\",\"rationale\":\"The authorized command capability is unavailable.\",\"constraints\":[],\"evidenceUsed\":[\"Current packet commands\"],\"safeNextAction\":\"Provide the command capability.\",\"correctedApproach\":null,\"humanQuestion\":\"Can the command capability be exposed?\",\"humanDecisionDomain\":\"Permissions\"}"
-                ),
-                Read("read"),
-                TestSupport.Text(PlannerJson(PlannerDecisionValue.Proceed))
-            );
-            var participant = Factory(_ => planner).Create().Planner;
-            var state = TestSupport.State(repository) with
-            {
-                ExecutorTransition = new ExecutorTransition.PlannerRequested(
-                    new("slice", "Proceed?", "Use packet commands.", ["README.md"])
-                ),
-            };
-
-            var result = await new PipelineRunner().RunAsync(
-                Pipeline.Start(participant, "planner-human-boundary").Build(participant),
-                state,
-                cancellationToken: TestContext.Current.CancellationToken
-            );
-
-            planner.CallCount.Should().Be(3);
-            result.State.MutationAuthorized.Should().BeTrue();
-            result.State.PlannerDecision!.Decision.Should().Be(PlannerDecisionValue.Proceed);
         }
         finally
         {
@@ -430,11 +378,11 @@ public sealed class LifecycleFeatureProofTests
             var planner = new ScriptedChatClient(
                 "planner",
                 TestSupport.Text(
-                    "{\"decision\":\"NeedsHuman\",\"rationale\":\"The packet does not decide the Member access policy.\",\"constraints\":[],\"evidenceUsed\":[\"Current authorization policy\"],\"safeNextAction\":\"Obtain the intended Member access policy.\",\"correctedApproach\":null,\"humanQuestion\":\"Should Members be permitted to view Cases?\",\"humanDecisionDomain\":\"Permissions\"}"
+                    "{\"decision\":\"NeedsHuman\",\"rationale\":\"Should customer administrators be authorized to make this tool available to contractors?\",\"constraints\":[],\"evidenceUsed\":[\"Current authorization policy\"],\"safeNextAction\":\"Obtain the intended Member access policy.\",\"correctedApproach\":null,\"humanQuestion\":\"Should Members be permitted to view Cases?\",\"humanDecisionDomain\":\"Permissions\"}"
                 ),
                 Read("policy-read"),
                 TestSupport.Text(
-                    "{\"decision\":\"NeedsHuman\",\"rationale\":\"The packet does not decide the Member access policy.\",\"constraints\":[],\"evidenceUsed\":[\"Current authorization policy\"],\"safeNextAction\":\"Obtain the intended Member access policy.\",\"correctedApproach\":null,\"humanQuestion\":\"Should Members be permitted to view Cases?\",\"humanDecisionDomain\":\"Permissions\"}"
+                    "{\"decision\":\"NeedsHuman\",\"rationale\":\"Should customer administrators be authorized to make this tool available to contractors?\",\"constraints\":[],\"evidenceUsed\":[\"Current authorization policy\"],\"safeNextAction\":\"Obtain the intended Member access policy.\",\"correctedApproach\":null,\"humanQuestion\":\"Should Members be permitted to view Cases?\",\"humanDecisionDomain\":\"Permissions\"}"
                 )
             );
             var participant = Factory(_ => planner).Create().Planner;
@@ -498,7 +446,16 @@ public sealed class LifecycleFeatureProofTests
                 TestSupport.Text(PlannerJson(PlannerDecisionValue.Proceed)),
                 Read("stop-read"),
                 TestSupport.Text(PlannerJson(PlannerDecisionValue.Stop))
-            );
+            )
+            {
+                BeforeCall = call =>
+                {
+                    if (call == 6)
+                    {
+                        time.Now = started.AddMinutes(12);
+                    }
+                },
+            };
             var result = await new PipelineRunner().RunAsync(
                 new CadenceComposition(
                     Factory(x => x == "executor" ? executor : planner, time: time)

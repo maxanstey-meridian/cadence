@@ -37,7 +37,7 @@ internal static class ExecutorGroundingPolicy
         )
         {
             throw new InvalidOperationException(
-                "Inspect relevant repository implementation, tests, or call sites with an available repository-inspection tool, then retry ask_planner."
+                "No completed repository inspection exists in this visit. Inspect implementation, tests, or call sites relevant to your proposed slice, then retry ask_planner as described in its instructions."
             );
         }
 

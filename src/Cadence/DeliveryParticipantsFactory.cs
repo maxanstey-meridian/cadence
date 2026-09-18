@@ -66,7 +66,7 @@ public sealed class CadenceParticipantsFactory(
                 resetContext,
                 dirtyWorkCheckpoint
             ),
-            PlannerAgent.Create(agents),
+            PlannerAgent.Create(agents, dirtyWorkCheckpoint),
             new PlannerFailureStage().Definition,
             new CaptureCandidateStage(git),
             new VerificationStage(new VerificationOperation(git)),

@@ -382,6 +382,9 @@ internal static class Program
             MutationAuthorized = false,
             PlannerDecision = null,
             ResumeRequested = true,
+            CurrentPlannerRequest =
+                state.CurrentPlannerRequest
+                ?? (state.ExecutorTransition as ExecutorTransition.PlannerRequested)?.Request,
             OperatorInstruction = instruction ?? state.OperatorInstruction,
             OperatorInstructionPending =
                 instruction is not null || state.OperatorInstructionPending,

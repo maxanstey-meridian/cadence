@@ -32,7 +32,15 @@ internal sealed class CadenceAgentFactory(
                 chatClients(profileName),
                 chatClients
             )
-            .UseHarness(CadenceHarnessInstructions.Value);
+            .UseHarness(
+                CadenceHarnessInstructions.Value,
+                profile.ContextWindowTokens,
+                profile.MaxOutputTokens,
+                profile.DisableCompaction
+            )
+            .WithModelRequestOptions(
+                new AgentModelRequestOptions(maxOutputTokens: profile.MaxOutputTokens)
+            );
 
         foreach (var skill in skills)
         {

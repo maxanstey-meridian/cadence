@@ -236,9 +236,18 @@ Cadence reads `$CADENCE_HOME/config.json`, defaulting to `~/.cadence/config.json
 }
 ```
 
-`disableCompaction` controls framework conversation compaction for agents using the profile's
-checkpoint policy. Cadence currently applies that policy to Executor; Planner and Reviewer do not
-configure in-session checkpoint compaction.
+`contextWindowTokens`, `maxOutputTokens` and `disableCompaction` apply to all three roles,
+independently of lifecycle checkpoints. `checkpointAtPercent` controls Executor checkpointing;
+Planner and Reviewer do not emit Executor checkpoints. Planner retains its conversation with
+the configured compaction policy.
+
+Planner constraints persist across approvals, keyed by ID. Reusing an ID explicitly replaces
+that requirement; omitting an ID does not remove it. The assessed request survives outcome updates
+and checkpoints. The continuity interval restarts when Planner grants mutation authority.
+
+Verification messages show bounded excerpts. Use `read_ledger` or `search_ledger` to find a
+captured record, then `read_ledger_entry(entryCursor, offset, limit)` and follow `nextOffset`
+to retrieve its full content without rerunning the command.
 
 `reviewerDoctrineFile` is required. Relative paths resolve against the configuration
 directory. Cadence loads the current JSON doctrine document once for the run:

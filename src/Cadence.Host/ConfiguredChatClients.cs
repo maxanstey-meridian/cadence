@@ -82,7 +82,8 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
         if (
             provider.WireApi == "completions"
             && (
-                endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
+                profile.Provider.Equals("ollama", StringComparison.OrdinalIgnoreCase)
+                || endpoint.Host.Equals("openrouter.ai", StringComparison.OrdinalIgnoreCase)
                 || endpoint.Host.EndsWith(".openrouter.ai", StringComparison.OrdinalIgnoreCase)
             )
         )

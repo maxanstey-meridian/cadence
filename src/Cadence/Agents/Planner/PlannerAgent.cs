@@ -4,7 +4,10 @@ namespace Cadence;
 
 internal static class PlannerAgent
 {
-    internal static AgentDefinition<CadenceState> Create(CadenceAgentFactory agents) =>
+    internal static AgentDefinition<CadenceState> Create(
+        CadenceAgentFactory agents,
+        DirtyWorkCheckpointPolicy continuity
+    ) =>
         agents.Create(
             CadenceIds.Planner,
             "planner",
@@ -28,7 +31,8 @@ internal static class PlannerAgent
                     .WithMessage(PlannerPrompts.BuildMessage)
                     .WithOutput(
                         new PlannerDecisionOutput(),
-                        (state, decision) => state.RecordPlannerDecision(decision)
+                        (state, decision) =>
+                            state.RecordPlannerDecision(decision, continuity.UtcNow)
                     )
                     .RequireOutputAcceptance(PlannerPolicies.DecisionBoundaries())
                     .ContinueSession()

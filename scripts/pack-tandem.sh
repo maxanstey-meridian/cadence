@@ -6,7 +6,7 @@ VERSION=${TANDEM_VERSION:-"0.1.10-local"}
 mkdir -p "$(dirname -- "$0")/../packages"
 FEED=$(CDPATH= cd -- "$(dirname -- "$0")/../packages" && pwd)
 
-for package in tandem.generators tandem tandem.advanced tandem.ledger tandem.openaicompatible tandem.terminal tandem.packets; do
+for package in meridian.tandem.generators meridian.tandem meridian.tandem.advanced meridian.tandem.ledger meridian.tandem.openaicompatible meridian.tandem.terminal meridian.tandem.packets; do
   rm -rf "$HOME/.nuget/packages/$package/$VERSION"
 done
 

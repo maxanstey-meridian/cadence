@@ -9,6 +9,8 @@ public sealed class DirtyWorkCheckpointPolicy(GitProcess git, TimeProvider timeP
     private static readonly TimeSpan _interval = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<string, byte> _required = new(StringComparer.Ordinal);
 
+    internal DateTimeOffset UtcNow => timeProvider.GetUtcNow();
+
     public bool IsRequired(string workspacePath) => _required.ContainsKey(workspacePath);
 
     public void ClearRequirement(string workspacePath) => _required.TryRemove(workspacePath, out _);
@@ -55,7 +57,7 @@ public sealed class DirtyWorkCheckpointPolicy(GitProcess git, TimeProvider timeP
     private static ToolInterceptionResult Blocked() =>
         new ToolInterceptionResult.Blocked(
             "CONTINUITY CHECKPOINT REQUIRED: Your edit was NOT applied. "
-                + "Call write_checkpoint with your current understanding, uncertainties, "
+                + "Call write_checkpoint with the current slice, progress and remaining work within it, relevant uncertainties, "
                 + "and exact next action. This checkpoint retains your current Executor session."
         );
 }
