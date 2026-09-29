@@ -294,12 +294,9 @@ retained packet's source repository.
 ## Prepare Tandem
 
 Cadence consumes `Tandem`, `Tandem.Advanced`, `Tandem.Generators`, `Tandem.Ledger`,
-`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` as NuGet packages,
-pinned by `TandemVersion` in `Directory.Build.props`.
-
-On the `slop/tandem-cleanup` branch the version is an unreleased local pack, restored from the
-git-ignored `local-nupkgs/` folder; see `docs/tandem-cleanup.md` for how to rebuild it and how to
-switch back to a published version.
+`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` as NuGet packages from
+nuget.org, pinned by `TandemVersion` in `Directory.Build.props`. `dotnet restore` resolves
+them with no extra setup.
 
 ## Run
 

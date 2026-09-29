@@ -1,23 +1,10 @@
 # Tandem slop cleanup: Cadence adaptation (W2-8)
 
-Branch `slop/tandem-cleanup`. Not merged, pushed or tagged. It is for the owner to review.
+Branch `slop/tandem-cleanup`, for the owner to review before merging.
 
-## How Cadence references Tandem on this branch
+## How Cadence references Tandem
 
-- `Directory.Build.props`: `TandemVersion` is `0.1.1-slop.4f17b4d`.
-- `NuGet.config` adds the source `tandem-local` → `local-nupkgs/` (relative to the repo root, git-ignored).
-- The packages were packed from tandem `slop/integration` @ `4f17b4d` (from a temporary detached worktree, removed after packing):
-
-  ```sh
-  cd <a Tandem checkout at the commit you want>
-  for p in Tandem Tandem.Advanced Tandem.Generators Tandem.Ledger Tandem.OpenAICompatible Tandem.Packets Tandem.Terminal; do
-    dotnet pack src/$p -c Release -p:Version=0.1.1-slop.4f17b4d -o ~/Sites/cadence-wt-tandem/local-nupkgs
-  done
-  ```
-
-  If you repack a different commit, change the version suffix too. NuGet caches packages by version in `~/.nuget/packages`, so reusing a version silently restores the old build.
-
-**Switching to a published Tandem:** set `TandemVersion` to the published version, delete the `tandem-local` line from `NuGet.config` and the "Prepare Tandem" note in `README.md`, then remove `/local-nupkgs/` from `.gitignore` and delete the folder.
+`TandemVersion` in `Directory.Build.props` pins the published Tandem 0.3.0 from nuget.org, the first release with the cleaned-up surface.
 
 ## Resume: product decision
 
