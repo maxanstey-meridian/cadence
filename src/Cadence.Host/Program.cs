@@ -103,7 +103,7 @@ internal static class Program
                 )
         );
 
-        var resume = new Command("resume", "Continue an existing durable delivery")
+        var resume = new Command("resume", "Continue a previous run's delivery in a new run")
         {
             runIdArgument,
             resumePacketOption,
@@ -217,6 +217,8 @@ internal static class Program
         );
     }
 
+    // Active runs are process-owned: a resume never reopens the prior run. It starts a new run,
+    // seeded with the prior run's latest accepted state, in the prior run's retained workspace.
     private static async Task<int> ResumeAsync(
         string target,
         string? packetPath,
@@ -229,14 +231,17 @@ internal static class Program
     )
     {
         var home = ResolveHome(explicitHome);
-        if (!Guid.TryParse(target, out var runId))
+        if (!Guid.TryParse(target, out var priorRunId))
         {
             throw new InvalidOperationException($"Invalid run ID '{target}'.");
         }
         var host = LoadHostConfiguration(home, explicitConfig);
-        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
-        var workspace = Path.Combine(runDirectory, "workspace");
-        var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+        var priorLedger = Path.Combine(home, "runs", priorRunId.ToString("N"), "ledger.sqlite3");
+        if (!File.Exists(priorLedger))
+        {
+            throw new InvalidOperationException($"Run '{priorRunId:N}' does not exist.");
+        }
+        var priorStore = new SqliteLedgerStore(priorLedger);
         var packet = packetPath is null
             ? null
             : await PacketReader.ReadAsync(packetPath, host.Configuration, cancellationToken);
@@ -244,39 +249,38 @@ internal static class Program
             (
                 packet is null
                     ? (
-                        await store.ReadLatestAcceptedAsync<CadenceState>(runId, cancellationToken)
+                        await priorStore.ReadLatestAcceptedAsync<CadenceState>(
+                            priorRunId,
+                            cancellationToken
+                        )
                     )?.Value
                     : await ReadLatestAcceptedWithPacketAsync(
-                        store,
-                        runId,
+                        priorStore,
+                        priorRunId,
                         packet,
                         cancellationToken
                     )
             )
             ?? throw new InvalidOperationException(
-                $"Run '{runId:N}' has no accepted Cadence state."
+                $"Run '{priorRunId:N}' has no accepted Cadence state."
             );
-        if (
-            !string.Equals(
-                Path.GetFullPath(retained.WorkspacePath),
-                Path.GetFullPath(workspace),
-                StringComparison.Ordinal
-            )
-        )
+        if (!IsRunWorkspace(home, retained.WorkspacePath))
         {
             throw new InvalidOperationException(
-                $"Run '{runId:N}' belongs to workspace '{retained.WorkspacePath}', not '{workspace}'."
+                $"Run '{priorRunId:N}' belongs to workspace '{retained.WorkspacePath}', which is not a Cadence run workspace under '{home}'."
             );
         }
         var state = packet is null
             ? CreateResumeState(retained, instruction)
             : CreateResumeState(retained, packet);
-        await store.ReopenRunAsync(runId, cancellationToken);
-        if (instruction is not null)
-        {
-            await PersistOperatorInstructionAsync(store, runId, state, cancellationToken);
-        }
         var execution = LoadExecutionConfiguration(host, state.Packet.Repository);
+
+        var runId = Guid.CreateVersion7();
+        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+        Directory.CreateDirectory(runDirectory);
+        var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
+        await RecordResumeAsync(store, runId, priorRunId, state, cancellationToken);
+        Console.WriteLine($"Resuming run {priorRunId:N} as run {runId:N}.");
 
         return await ExecuteAsync(
             execution,
@@ -289,25 +293,35 @@ internal static class Program
         );
     }
 
-    internal static async ValueTask PersistOperatorInstructionAsync(
+    internal static bool IsRunWorkspace(string home, string workspace)
+    {
+        var path = Path.GetFullPath(workspace);
+        var runs = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(home, "runs")));
+        return Path.GetFileName(path) == "workspace"
+            && string.Equals(
+                Path.GetDirectoryName(Path.GetDirectoryName(path)),
+                runs,
+                StringComparison.Ordinal
+            );
+    }
+
+    // The seed makes the new run self-contained: it can be published or resumed, and keeps the
+    // operator instruction, even if it stops before any step accepts a value.
+    internal static async ValueTask RecordResumeAsync(
         SqliteLedgerStore store,
         Guid runId,
+        Guid priorRunId,
         CadenceState state,
         CancellationToken cancellationToken
     )
     {
         var observer = await store.CreateObserverAsync(runId, "cadence", cancellationToken);
+        var summary = $"Resumed from run '{priorRunId:N}'.";
         await observer.ObserveAsync(
             new PipelineStepCompleted(
                 runId,
-                "resume.operator-instruction",
-                new PipelineRunOutcome(
-                    "resume.instruction.accepted",
-                    "Accepted operator recovery instruction.",
-                    "Accepted operator recovery instruction.",
-                    default,
-                    TimeSpan.Zero
-                ),
+                "resume",
+                new PipelineRunOutcome("resume.accepted", summary, summary, default, TimeSpan.Zero),
                 new PipelineAcceptedValue(
                     typeof(CadenceState).FullName ?? typeof(CadenceState).Name,
                     JsonSerializer.SerializeToElement(state, TandemJson.CreateTypedContract())

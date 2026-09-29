@@ -60,14 +60,15 @@ Explicitly exclude:
 - General durable replay orchestration.
 - Automatic merge.
 
-Explicit recovery is not replay. `cadence resume <run-id>` reuses the retained workspace and
-accepted ledger facts, starts fresh model sessions, closes stale mutation authority, and lets the
-restored `CadenceState` route through the existing lifecycle. `--packet` may replace the complete
-delivery contract except repository identity. It retains the run, workspace, pinned base, and
-review-attempt configuration while resetting packet-derived progress and candidate evidence.
-Every ledger status can reopen as `Running`; that status records process-attempt ownership, not
-the lifecycle phase. Candidate, verification, review, human-interaction, accepted-candidate, and
-publication progress remain resumable within the same durable delivery and stable run ID.
+Explicit recovery is not replay. `cadence resume <run-id>` starts a new run seeded with the prior
+run's latest accepted ledger facts, in the prior run's retained workspace, with fresh model
+sessions and stale mutation authority closed; the restored `CadenceState` routes through the
+existing lifecycle. Active runs are process-owned, so the prior run is never reopened; it stays
+as history. `--packet` may replace the complete delivery contract except repository identity. It
+retains the workspace, pinned base, and review-attempt configuration while resetting
+packet-derived progress and candidate evidence. A run of any ledger status can be resumed.
+Candidate, verification, review, human-interaction, accepted-candidate, and publication progress
+carry forward in the seeded state.
 
 Repairs remain inside one run:
 

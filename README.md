@@ -113,7 +113,7 @@ limit. Cadence waits for the answer in the terminal and resumes the same live ru
 
 Cadence is a single-run pipeline, not a queue or background service. It does not manage
 campaigns or merge changes automatically. Its only process-recovery surface is explicit
-executor-phase resume from the retained workspace and accepted Tandem ledger state written under the current Cadence state contract. Older internal persisted shapes are not automatically migrated.
+resume: a new run seeded from a prior run's retained workspace and accepted Tandem ledger state written under the current Cadence state contract. Older internal persisted shapes are not automatically migrated.
 
 ## Packet
 
@@ -294,9 +294,12 @@ retained packet's source repository.
 ## Prepare Tandem
 
 Cadence consumes `Tandem`, `Tandem.Advanced`, `Tandem.Generators`, `Tandem.Ledger`,
-`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` as NuGet packages from
-nuget.org, pinned by `TandemVersion` in `Directory.Build.props`. `dotnet restore` resolves
-them with no extra setup.
+`Tandem.OpenAICompatible`, `Tandem.Packets`, and `Tandem.Terminal` as NuGet packages,
+pinned by `TandemVersion` in `Directory.Build.props`.
+
+On the `slop/tandem-cleanup` branch the version is an unreleased local pack, restored from the
+git-ignored `local-nupkgs/` folder; see `docs/tandem-cleanup.md` for how to rebuild it and how to
+switch back to a published version.
 
 ## Run
 
@@ -326,21 +329,30 @@ Any existing run can continue from its retained workspace and latest accepted st
 ```sh
 cadence resume <run-id>
 cadence resume <run-id> --packet replacement.md
+cadence resume <run-id> --instruction "Only repair the staff case."
 ```
 
-Ordinary resume preserves the run ID, ledger, workspace, pinned base, and delivery progress. A
+Runs are owned by the process that runs them, so resume never reopens the prior run. It starts a
+new run with a new run ID (printed, and shown in the terminal header) and its own
+`~/.cadence/runs/<new-run-id>/ledger.sqlite3`, seeded with the prior run's latest accepted state.
+The prior run keeps its ledger and status as history. The workspace stays where the original run
+created it, and the new run works in it. The new run's first ledger entry, step `resume`, records
+the seeded state and the run it resumed from, so the new run can itself be published or resumed
+even if it stops before any step accepts a value. Agents' ledger tools read only the new run's
+journal; carried-forward facts live in the seeded state.
+
+Ordinary resume preserves the workspace, pinned base, and delivery progress. A
 supplied packet may change every delivery-contract field except repository identity. It retains
-the run ID, ledger, workspace, pinned base, and review-attempt configuration, but deliberately
+the workspace, pinned base, and review-attempt configuration, but deliberately
 resets packet-derived outcomes, Planner constraints, checkpoints, candidate evidence,
 verification, review, findings, Human answers, and accepted SHA before normal domain transitions
-continue. Resume
-closes stale mutation authority, clears process-attempt model decisions, and reopens the same
-ledger run as `Running`; the persisted `CadenceState` then selects the lifecycle phase through
-the existing pipeline. Ledger status `Running` means a process attempt currently owns the run—it
-does not mean the lifecycle is in Executor. `Ready`, `Cancelled`, candidate, verification, review,
-and human-interaction states all resume by their retained domain state. The workspace remains
-validated against the exact accepted base or candidate SHA. Legacy `records.json` runs are not
-imported or resumable.
+continue. Resume closes stale mutation authority and clears process-attempt model decisions; the
+seeded `CadenceState` then selects the lifecycle phase through the existing pipeline. A run of any
+ledger status can be resumed: `Ready`, `Cancelled`, candidate, verification, review, and
+human-interaction states all resume by their retained domain state. A packet, workspace, or
+configuration problem is reported before the new run is created. The workspace remains validated
+against the exact accepted base or candidate SHA. Legacy `records.json` runs are not imported or
+resumable.
 
 Pass `--publish` to publish immediately after Reviewer acceptance, or publish later
 with the printed run ID:

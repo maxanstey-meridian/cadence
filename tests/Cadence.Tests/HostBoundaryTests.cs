@@ -859,6 +859,49 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
+    public void Resume_accepts_workspaces_of_any_run_in_the_home_and_nothing_else()
+    {
+        var home = Path.Combine(Path.GetTempPath(), "cadence-home");
+
+        Program
+            .IsRunWorkspace(home, Path.Combine(home, "runs", "origin", "workspace"))
+            .Should()
+            .BeTrue();
+        Program
+            .IsRunWorkspace(
+                home + Path.DirectorySeparatorChar,
+                Path.Combine(home, "runs", "origin", "workspace")
+            )
+            .Should()
+            .BeTrue();
+        Program
+            .IsRunWorkspace(home, Path.Combine(home, "another-run", "workspace"))
+            .Should()
+            .BeFalse();
+        Program
+            .IsRunWorkspace(home, Path.Combine(home, "runs", "origin", "other"))
+            .Should()
+            .BeFalse();
+        Program.IsRunWorkspace(home, Path.Combine(home, "runs", "workspace")).Should().BeFalse();
+    }
+
+    private static (Guid RunId, SqliteLedgerStore Store) SingleResumedRun(
+        string home,
+        Guid priorRunId
+    )
+    {
+        var directory = Directory
+            .GetDirectories(Path.Combine(home, "runs"))
+            .Should()
+            .ContainSingle(path => Path.GetFileName(path) != priorRunId.ToString("N"))
+            .Subject;
+        return (
+            Guid.ParseExact(Path.GetFileName(directory), "N"),
+            new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"))
+        );
+    }
+
+    [Fact]
     public void Terminal_cancellation_is_recorded_as_resumable_interruption()
     {
         Program
@@ -874,7 +917,7 @@ public sealed class HostBoundaryTests
     [InlineData(LedgerRunStatus.Faulted)]
     [InlineData(LedgerRunStatus.Interrupted)]
     [InlineData(LedgerRunStatus.Cancelled)]
-    public async Task Resume_reopens_every_status_and_reaches_the_pipeline_in_the_same_run(
+    public async Task Resume_starts_a_fresh_run_seeded_from_a_prior_run_in_every_status(
         LedgerRunStatus status
     )
     {
@@ -954,7 +997,6 @@ public sealed class HostBoundaryTests
         {
             await store.CompleteRunAsync(runId, status, TestContext.Current.CancellationToken);
         }
-        var sawRunning = false;
         var planner = new ScriptedChatClient(
             "planner",
             TestSupport.ToolCall(
@@ -965,17 +1007,7 @@ public sealed class HostBoundaryTests
             TestSupport.Text(
                 "{\"decision\":\"Stop\",\"rationale\":\"Repository read supports stopping.\",\"constraints\":[],\"evidenceUsed\":[\"README.md\"],\"safeNextAction\":\"Stop safely.\",\"correctedApproach\":null,\"humanQuestion\":null,\"humanDecisionDomain\":null}"
             )
-        )
-        {
-            BeforeCall = _ =>
-                sawRunning =
-                    store
-                        .GetRunAsync(runId, TestContext.Current.CancellationToken)
-                        .AsTask()
-                        .GetAwaiter()
-                        .GetResult()
-                        .Status == LedgerRunStatus.Running,
-        };
+        );
         var previousFactory = Program.ChatClientFactoryOverride;
         Program.ChatClientFactoryOverride = name =>
             name == CadenceIds.Planner ? planner : new ScriptedChatClient(name);
@@ -991,16 +1023,42 @@ public sealed class HostBoundaryTests
             ]);
 
             exitCode.Should().Be(3);
-            sawRunning.Should().BeTrue();
             planner.CallCount.Should().Be(2);
-            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
             Directory.Exists(workspace).Should().BeTrue();
-            var accepted = await store.ReadLatestAcceptedAsync<CadenceState>(
-                runId,
+            (await store.GetRunAsync(runId, TestContext.Current.CancellationToken))
+                .Status.Should()
+                .Be(status);
+            (
+                await store.ReadLatestAcceptedAsync<CadenceState>(
+                    runId,
+                    TestContext.Current.CancellationToken
+                )
+            )!
+                .Value.OperatorInstruction.Should()
+                .BeNull();
+
+            var (resumedRunId, resumedStore) = SingleResumedRun(home, runId);
+            (await resumedStore.GetRunAsync(resumedRunId, TestContext.Current.CancellationToken))
+                .Status.Should()
+                .Be(LedgerRunStatus.Failed);
+            var seed = (
+                await resumedStore.ReadAcceptedAsync(
+                    resumedRunId,
+                    TestContext.Current.CancellationToken
+                )
+            )[0];
+            seed.StepId.Should().Be("resume");
+            seed.Payload!.Value.GetProperty("operatorInstruction")
+                .GetString()
+                .Should()
+                .Be("Preserve retained work.");
+            var accepted = await resumedStore.ReadLatestAcceptedAsync<CadenceState>(
+                resumedRunId,
                 TestContext.Current.CancellationToken
             );
             accepted.Should().NotBeNull();
-            accepted!
+            accepted!.Value.WorkspacePath.Should().Be(workspace);
+            accepted
                 .Value.Packet.Commands.Should()
                 .Equal(new PacketCommandEntry("retained-command", "retained command"));
             accepted
@@ -1175,10 +1233,10 @@ public sealed class HostBoundaryTests
             exitCode.Should().Be(3);
             planner.CallCount.Should().Be(4);
             executor.CallCount.Should().Be(4);
-            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
             Directory.Exists(workspace).Should().BeTrue();
-            var accepted = await store.ReadLatestAcceptedAsync<CadenceState>(
-                runId,
+            var (resumedRunId, resumedStore) = SingleResumedRun(home, runId);
+            var accepted = await resumedStore.ReadLatestAcceptedAsync<CadenceState>(
+                resumedRunId,
                 TestContext.Current.CancellationToken
             );
             accepted.Should().NotBeNull();
@@ -1275,7 +1333,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public async Task Cross_repository_packet_rejection_does_not_reopen_the_ledger()
+    public async Task Cross_repository_packet_rejection_starts_no_new_run()
     {
         var home = Path.Combine(Path.GetTempPath(), $"cadence-repository-guard-{Guid.NewGuid():N}");
         var retainedRepository = TestSupport.CreateGitRepository();
@@ -1340,6 +1398,7 @@ public sealed class HostBoundaryTests
             ]);
 
             exitCode.Should().Be(1);
+            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
             (await store.GetRunAsync(runId, TestContext.Current.CancellationToken))
                 .Status.Should()
                 .Be(LedgerRunStatus.Failed);
@@ -1476,6 +1535,7 @@ public sealed class HostBoundaryTests
 
             exitCode.Should().Be(1);
             Directory.Exists(Path.Combine(runDirectory, "workspace")).Should().BeFalse();
+            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
         }
         finally
         {

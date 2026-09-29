@@ -184,7 +184,7 @@ public sealed class OperatorInstructionResumeTests
     }
 
     [Fact(Timeout = 15_000)]
-    public async Task Instruction_is_accepted_in_the_typed_journal_before_configuration_failure()
+    public async Task Configuration_failure_starts_no_run_and_leaves_the_prior_run_untouched()
     {
         var home = Path.Combine(Path.GetTempPath(), $"cadence-instruction-{Guid.NewGuid():N}");
         var runId = Guid.CreateVersion7();
@@ -224,71 +224,7 @@ public sealed class OperatorInstructionResumeTests
 
             result.ExitCode.Should().Be(1);
             result.Output.Should().Contain("missing-doctrine.json");
-            var latest = await store.ReadLatestAcceptedAsync<CadenceState>(
-                runId,
-                TestContext.Current.CancellationToken
-            );
-            latest.Should().NotBeNull();
-            latest!.Value.OperatorInstruction.Should().Be("Keep inherited work.");
-            latest.Value.OperatorInstructionPending.Should().BeTrue();
-            latest.Value.CandidateSha.Should().Be(original.CandidateSha);
-            latest.Value.ReviewRepairRequired.Should().BeTrue();
-            latest.Value.MutationAuthorized.Should().BeFalse();
-            latest.Value.ResumeRequested.Should().BeTrue();
-        }
-        finally
-        {
-            Directory.Delete(home, true);
-        }
-    }
-
-    [Theory(Timeout = 30_000)]
-    [InlineData(LedgerRunStatus.Running)]
-    [InlineData(LedgerRunStatus.Ready)]
-    [InlineData(LedgerRunStatus.Failed)]
-    [InlineData(LedgerRunStatus.Faulted)]
-    [InlineData(LedgerRunStatus.Interrupted)]
-    [InlineData(LedgerRunStatus.Cancelled)]
-    public async Task Instruction_resume_reopens_every_persisted_status_without_a_host_allowlist(
-        LedgerRunStatus status
-    )
-    {
-        var home = Path.Combine(Path.GetTempPath(), $"cadence-status-{Guid.NewGuid():N}");
-        var runId = Guid.CreateVersion7();
-        var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
-        var workspace = Path.Combine(runDirectory, "workspace");
-        Directory.CreateDirectory(workspace);
-        var config = Path.Combine(home, "config.json");
-        File.WriteAllText(config, ConfigurationJson("missing-doctrine.json"));
-        var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
-        var observer = await store.CreateObserverAsync(
-            runId,
-            "cadence",
-            TestContext.Current.CancellationToken
-        );
-        await observer.ObserveAsync(
-            Accepted(runId, TestSupport.State(workspace)),
-            TestContext.Current.CancellationToken
-        );
-        if (status != LedgerRunStatus.Running)
-        {
-            await store.CompleteRunAsync(runId, status, TestContext.Current.CancellationToken);
-        }
-
-        try
-        {
-            var result = await CaptureOutputAsync([
-                "resume",
-                runId.ToString("N"),
-                "--instruction",
-                "recover",
-                "--home",
-                home,
-                "--config",
-                config,
-            ]);
-
-            result.ExitCode.Should().Be(1);
+            Directory.GetDirectories(Path.Combine(home, "runs")).Should().ContainSingle();
             (await store.GetRunAsync(runId, TestContext.Current.CancellationToken))
                 .Status.Should()
                 .Be(LedgerRunStatus.Running);
@@ -296,8 +232,7 @@ public sealed class OperatorInstructionResumeTests
                 runId,
                 TestContext.Current.CancellationToken
             );
-            latest!.StepId.Should().Be("resume.operator-instruction");
-            latest.Value.OperatorInstruction.Should().Be("recover");
+            latest!.Value.Should().BeEquivalentTo(original);
         }
         finally
         {
@@ -312,21 +247,26 @@ public sealed class OperatorInstructionResumeTests
         Directory.CreateDirectory(directory);
         var runId = Guid.CreateVersion7();
         var store = new SqliteLedgerStore(Path.Combine(directory, "ledger.sqlite3"));
-        await store.CreateObserverAsync(runId, "cadence", TestContext.Current.CancellationToken);
-        await store.ReopenRunAsync(runId, TestContext.Current.CancellationToken);
         var state = Program.CreateResumeState(TestSupport.State(directory), "persist me");
         using var cancellation = new CancellationTokenSource();
 
         try
         {
-            await Program.PersistOperatorInstructionAsync(store, runId, state, cancellation.Token);
+            await Program.RecordResumeAsync(
+                store,
+                runId,
+                Guid.CreateVersion7(),
+                state,
+                cancellation.Token
+            );
             cancellation.Cancel();
 
             var latest = await store.ReadLatestAcceptedAsync<CadenceState>(
                 runId,
                 CancellationToken.None
             );
-            latest!.Value.OperatorInstruction.Should().Be("persist me");
+            latest!.StepId.Should().Be("resume");
+            latest.Value.OperatorInstruction.Should().Be("persist me");
             latest.Value.OperatorInstructionPending.Should().BeTrue();
         }
         finally
