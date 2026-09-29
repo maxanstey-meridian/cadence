@@ -8,3 +8,4 @@ TestResults/
 /reviewer-doctrine.md
 .threadkeeper.sqlite3*
 nupkgs/
+/local-nupkgs/
