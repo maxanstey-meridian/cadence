@@ -303,7 +303,8 @@ public sealed class LifecycleFeatureProofTests
             observer
                 .Observations.OfType<PipelineActionAttempted>()
                 .Where(action =>
-                    action.ActionName == "file_access_write" && action.Effect == "WorkspaceMutation"
+                    action.ActionName == "file_access_write"
+                    && action.Effect == ToolEffect.WorkspaceMutation
                 )
                 .Should()
                 .HaveCount(2);
@@ -311,8 +312,8 @@ public sealed class LifecycleFeatureProofTests
                 .Observations.OfType<PipelineActionCompleted>()
                 .Where(action =>
                     action.ActionName == "file_access_write"
-                    && action.Effect == "WorkspaceMutation"
-                    && action.Result == "Completed"
+                    && action.Effect == ToolEffect.WorkspaceMutation
+                    && action.Result == ToolInvocationStatus.Completed
                 )
                 .Should()
                 .HaveCount(2);

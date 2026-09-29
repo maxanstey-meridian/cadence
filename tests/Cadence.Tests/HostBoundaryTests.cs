@@ -341,7 +341,10 @@ public sealed class HostBoundaryTests
         "  - label: duplicate\n    command: one\n  - label: ' duplicate '\n    command: two"
     )]
     [InlineData("verification", "  - label: invalid.label\n    command: task check")]
-    public void Packet_reader_rejects_invalid_labeled_command_entries(string role, string entries)
+    public async Task Packet_reader_rejects_invalid_labeled_command_entries(
+        string role,
+        string entries
+    )
     {
         var repository = TestSupport.CreateTemporaryDirectory();
         var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
@@ -361,9 +364,13 @@ public sealed class HostBoundaryTests
             }
             File.WriteAllText(packetPath, content);
 
-            var act = () => PacketReader.Read(packetPath);
+            var act = async () =>
+                await PacketReader.ReadAsync(
+                    packetPath,
+                    cancellationToken: TestContext.Current.CancellationToken
+                );
 
-            act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
+            await act.Should().ThrowAsync<PacketFileException>().WithMessage("*validation failed*");
         }
         finally
         {
@@ -375,7 +382,7 @@ public sealed class HostBoundaryTests
     [Theory]
     [InlineData("commands", 53)]
     [InlineData("verification", 48)]
-    public void Packet_reader_rejects_tool_names_longer_than_64_characters(
+    public async Task Packet_reader_rejects_tool_names_longer_than_64_characters(
         string role,
         int labelLength
     )
@@ -399,9 +406,13 @@ public sealed class HostBoundaryTests
             }
             File.WriteAllText(packetPath, content);
 
-            var act = () => PacketReader.Read(packetPath);
+            var act = async () =>
+                await PacketReader.ReadAsync(
+                    packetPath,
+                    cancellationToken: TestContext.Current.CancellationToken
+                );
 
-            act.Should().Throw<PacketFileException>().WithMessage("*validation failed*");
+            await act.Should().ThrowAsync<PacketFileException>().WithMessage("*validation failed*");
         }
         finally
         {
@@ -411,7 +422,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Packet_reader_preserves_authored_lists_and_resolves_context_and_repository()
+    public async Task Packet_reader_preserves_authored_lists_and_resolves_context_and_repository()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}");
         var repository = Path.Combine(directory, "repository");
@@ -459,7 +470,10 @@ public sealed class HostBoundaryTests
                 content.Replace("Inspect first.\n", "Inspect first.\r\n", StringComparison.Ordinal)
             );
 
-            var packet = PacketReader.Read(path);
+            var packet = await PacketReader.ReadAsync(
+                path,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
 
             packet.Title.Should().Be("Deliver behavior");
             packet.Repository.Should().Be(repository);
@@ -501,7 +515,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Packet_reader_carries_declared_arguments_to_the_generated_tool_schema()
+    public async Task Packet_reader_carries_declared_arguments_to_the_generated_tool_schema()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}");
         var repository = Path.Combine(directory, "repository");
@@ -531,7 +545,10 @@ public sealed class HostBoundaryTests
                 );
             File.WriteAllText(packetPath, content);
 
-            var packet = PacketReader.Read(packetPath);
+            var packet = await PacketReader.ReadAsync(
+                packetPath,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
 
             packet.Commands.Should().ContainSingle().Which.Label.Should().Be("review");
             packet.Commands.Single().Command.Should().Be("review");
@@ -580,7 +597,7 @@ public sealed class HostBoundaryTests
     [Theory]
     [InlineData("unknown: value")]
     [InlineData("title: duplicate")]
-    public void Packet_reader_rejects_unknown_and_duplicate_frontmatter(string extra)
+    public async Task Packet_reader_rejects_unknown_and_duplicate_frontmatter(string extra)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -589,7 +606,12 @@ public sealed class HostBoundaryTests
         {
             File.WriteAllText(packetPath, ValidPacket(directory, extra));
 
-            var exception = Assert.Throws<PacketFileException>(() => PacketReader.Read(packetPath));
+            var exception = await Assert.ThrowsAsync<PacketFileException>(() =>
+                PacketReader.ReadAsync(
+                    packetPath,
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            );
 
             exception.Problems.Should().ContainSingle().Which.Path.Should().Be("$");
         }
@@ -615,7 +637,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Packet_reader_defaults_omitted_constraints_to_empty()
+    public async Task Packet_reader_defaults_omitted_constraints_to_empty()
     {
         var repository = TestSupport.CreateTemporaryDirectory();
         var packetPath = Path.Combine(Path.GetTempPath(), $"cadence-packet-{Guid.NewGuid():N}.md");
@@ -623,8 +645,22 @@ public sealed class HostBoundaryTests
         {
             File.WriteAllText(packetPath, ValidPacket(repository, ""));
 
-            PacketReader.Read(packetPath).Constraints.Should().BeEmpty();
-            PacketReader.Read(packetPath).Commands.Should().BeEmpty();
+            (
+                await PacketReader.ReadAsync(
+                    packetPath,
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            )
+                .Constraints.Should()
+                .BeEmpty();
+            (
+                await PacketReader.ReadAsync(
+                    packetPath,
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+            )
+                .Commands.Should()
+                .BeEmpty();
         }
         finally
         {
@@ -723,11 +759,14 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Checked_in_example_parses_through_the_production_reader()
+    public async Task Checked_in_example_parses_through_the_production_reader()
     {
         var root = FindRepositoryRoot();
 
-        var packet = PacketReader.Read(Path.Combine(root, "examples", "packet.md"));
+        var packet = await PacketReader.ReadAsync(
+            Path.Combine(root, "examples", "packet.md"),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         packet.Repository.Should().Be(root);
         packet.Commands.Should().Equal(new PacketCommandEntry("format", "task format"));
@@ -1445,7 +1484,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Repository_defaults_match_resolved_source_and_merge_commands_by_label()
+    public async Task Repository_defaults_match_resolved_source_and_merge_commands_by_label()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -1480,7 +1519,11 @@ public sealed class HostBoundaryTests
                 )
             );
 
-            var packet = PacketReader.Read(packetPath, configuration);
+            var packet = await PacketReader.ReadAsync(
+                packetPath,
+                configuration,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
 
             packet.Repository.Should().Be(repository);
             packet
@@ -1536,7 +1579,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Repository_verification_allows_authored_packet_to_omit_verification()
+    public async Task Repository_verification_allows_authored_packet_to_omit_verification()
     {
         var root = Path.Combine(
             Path.GetTempPath(),
@@ -1560,13 +1603,22 @@ public sealed class HostBoundaryTests
                 ValidPacket(root, "")
                     .Replace("verification:\n  - label: test\n    command: dotnet test\n", "")
             );
-            PacketReader
-                .Read(path, configuration)
+            (
+                await PacketReader.ReadAsync(
+                    path,
+                    configuration,
+                    TestContext.Current.CancellationToken
+                )
+            )
                 .Verification.Should()
                 .Equal(new PacketCommandEntry("check", "task check"));
-            var act = () => PacketReader.Read(path);
-            act.Should()
-                .Throw<InvalidOperationException>()
+            var act = async () =>
+                await PacketReader.ReadAsync(
+                    path,
+                    cancellationToken: TestContext.Current.CancellationToken
+                );
+            await act.Should()
+                .ThrowAsync<InvalidOperationException>()
                 .WithMessage("*at least one verification*");
         }
         finally
@@ -1710,7 +1762,7 @@ public sealed class HostBoundaryTests
     }
 
     [Fact]
-    public void Packet_layer_duplicates_are_rejected_before_repository_merge_and_unmatched_repository_gets_no_defaults()
+    public async Task Packet_layer_duplicates_are_rejected_before_repository_merge_and_unmatched_repository_gets_no_defaults()
     {
         var root = Path.Combine(Path.GetTempPath(), $"cadence-packet-layer-{Guid.NewGuid():N}");
         var configured = Path.Combine(root, "configured");
@@ -1733,7 +1785,11 @@ public sealed class HostBoundaryTests
             );
             var unmatchedPath = Path.Combine(root, "unmatched.md");
             File.WriteAllText(unmatchedPath, ValidPacket(unmatched, ""));
-            var packet = PacketReader.Read(unmatchedPath, configuration);
+            var packet = await PacketReader.ReadAsync(
+                unmatchedPath,
+                configuration,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
             packet.Commands.Should().BeEmpty();
             packet.Verification.Should().Equal(new PacketCommandEntry("test", "dotnet test"));
 
@@ -1745,9 +1801,13 @@ public sealed class HostBoundaryTests
                     "commands:\n  - label: same\n    command: one\n  - label: same\n    command: two"
                 )
             );
-            var act = () => PacketReader.Read(duplicatePath, configuration);
-            act.Should()
-                .Throw<PacketFileException>()
+            var act = async () =>
+                await PacketReader.ReadAsync(
+                    duplicatePath,
+                    configuration,
+                    cancellationToken: TestContext.Current.CancellationToken
+                );
+            (await act.Should().ThrowAsync<PacketFileException>())
                 .Which.Problems.Should()
                 .Contain(problem => problem.Message.Contains("unique", StringComparison.Ordinal));
         }

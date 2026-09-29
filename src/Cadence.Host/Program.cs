@@ -90,13 +90,14 @@ internal static class Program
             debugOption,
         };
         validate.SetAction(
-            async (parse, _) =>
+            async (parse, cancellationToken) =>
                 await GuardAsync(
                     () =>
                         ValidateAsync(
                             parse.GetRequiredValue(validatePacketArgument),
                             parse.GetValue(homeOption),
-                            parse.GetValue(configOption)
+                            parse.GetValue(configOption),
+                            cancellationToken
                         ),
                     parse.GetValue(debugOption)
                 )
@@ -162,17 +163,22 @@ internal static class Program
             .InvokeAsync();
     }
 
-    private static Task<int> ValidateAsync(
+    private static async Task<int> ValidateAsync(
         string packetPath,
         string? explicitHome,
-        string? explicitConfig
+        string? explicitConfig,
+        CancellationToken cancellationToken
     )
     {
         var home = ResolveHome(explicitHome);
         var host = LoadHostConfiguration(home, explicitConfig);
-        var packet = PacketReader.Read(packetPath, host.Configuration);
+        var packet = await PacketReader.ReadAsync(
+            packetPath,
+            host.Configuration,
+            cancellationToken
+        );
         Console.WriteLine($"Valid packet: {packet.Title}");
-        return Task.FromResult(0);
+        return 0;
     }
 
     private static async Task<int> RunAsync(
@@ -186,7 +192,11 @@ internal static class Program
     {
         var home = ResolveHome(explicitHome);
         var host = LoadHostConfiguration(home, explicitConfig);
-        var packet = PacketReader.Read(packetPath, host.Configuration);
+        var packet = await PacketReader.ReadAsync(
+            packetPath,
+            host.Configuration,
+            cancellationToken
+        );
         var execution = LoadExecutionConfiguration(host, packet.Repository);
         var runId = Guid.CreateVersion7();
         var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
@@ -227,7 +237,9 @@ internal static class Program
         var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
         var workspace = Path.Combine(runDirectory, "workspace");
         var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
-        var packet = packetPath is null ? null : PacketReader.Read(packetPath, host.Configuration);
+        var packet = packetPath is null
+            ? null
+            : await PacketReader.ReadAsync(packetPath, host.Configuration, cancellationToken);
         var retained =
             (
                 packet is null
@@ -313,55 +325,40 @@ internal static class Program
     )
     {
         var valueType = typeof(CadenceState).FullName ?? typeof(CadenceState).Name;
-        var entries = await store
-            .ForRun(runId)
-            .ReadAsync(PipelineJournal.Stream, cancellationToken);
-        var accepted = entries.LastOrDefault(entry =>
-            PipelineJournal.IsAccepted(entry.Value)
-            && string.Equals(entry.Value.ValueType, valueType, StringComparison.Ordinal)
+        var accepted = (await store.ReadAcceptedAsync(runId, cancellationToken)).LastOrDefault(
+            record => string.Equals(record.ValueType, valueType, StringComparison.Ordinal)
         );
         if (accepted is null)
         {
             return null;
         }
 
+        const string location = "Latest accepted Cadence state";
         var payload =
-            accepted.Value.Payload
-            ?? throw new LedgerDataException(
-                $"Accepted value at sequence '{accepted.Sequence}' has no payload."
-            );
+            accepted.Payload ?? throw new LedgerDataException($"{location} has no payload.");
         try
         {
             var options = TandemJson.CreateTypedContract();
             var state =
                 JsonNode.Parse(payload.GetRawText())?.AsObject()
-                ?? throw new JsonException(
-                    $"Accepted value at sequence '{accepted.Sequence}' is null."
-                );
+                ?? throw new JsonException($"{location} is null.");
             var retainedRepository =
                 state["packet"]?["repository"]?.GetValue<string>()
-                ?? throw new JsonException(
-                    $"Accepted value at sequence '{accepted.Sequence}' has no packet repository."
-                );
+                ?? throw new JsonException($"{location} has no packet repository.");
             if (!RepositoryPathIdentity.Equals(retainedRepository, packet.Repository))
             {
                 throw new PacketRepositoryMismatchException(retainedRepository, packet.Repository);
             }
             state["packet"] = JsonSerializer.SerializeToNode(packet, options);
             return state.Deserialize<CadenceState>(options)
-                ?? throw new JsonException(
-                    $"Accepted value at sequence '{accepted.Sequence}' is null."
-                );
+                ?? throw new JsonException($"{location} is null.");
         }
         catch (Exception exception)
             when (exception is JsonException or NotSupportedException or InvalidOperationException
                 && exception is not PacketRepositoryMismatchException
             )
         {
-            throw new LedgerDataException(
-                $"Accepted value at sequence '{accepted.Sequence}' is malformed.",
-                exception
-            );
+            throw new LedgerDataException($"{location} is malformed.", exception);
         }
     }
 
@@ -473,8 +470,7 @@ internal static class Program
             initialState,
             new TerminalPipelineRunOptions
             {
-                Persistence = observer,
-                Run = new PipelineRunOptions(runId, interactions).WithRunLedger(
+                Run = new PipelineRunOptions(runId, interactions, observer).WithRunLedger(
                     store.ForRun(runId)
                 ),
                 Display = new TerminalDisplayOptions

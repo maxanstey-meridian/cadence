@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Collections.Concurrent;
 using Microsoft.Extensions.AI;
 using OpenAI;
@@ -67,6 +68,9 @@ internal sealed class ConfiguredChatClients(HostConfiguration configuration)
             {
                 Endpoint = endpoint,
                 NetworkTimeout = TimeSpan.FromSeconds(600),
+                // Tandem's StreamRetryChatClient is the only retry layer; the SDK default would
+                // multiply its attempts.
+                RetryPolicy = new ClientRetryPolicy(0),
             }
         );
 #pragma warning disable OPENAI001

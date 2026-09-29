@@ -181,9 +181,7 @@ public sealed class TerminalPresentationTests
                 [],
                 [],
                 ["executor"],
-                [],
-                "",
-                ""
+                []
             ),
             _runId,
             new TerminalDisplayOptions

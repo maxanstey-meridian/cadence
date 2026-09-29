@@ -206,13 +206,13 @@ public sealed class GitNexusToolTests
         {
             ToolInvocations =
             [
-                new Tandem.Advanced.ToolInvocationObservation(
+                new Tandem.ToolInvocationObservation(
                     "gitnexus",
-                    Tandem.Advanced.ToolEffect.ProcessExecution,
+                    Tandem.ToolEffect.ProcessExecution,
                     System.Text.Json.JsonSerializer.SerializeToElement(
                         new { subcommand = "status" }
                     ),
-                    Tandem.Advanced.ToolInvocationStatus.Completed,
+                    Tandem.ToolInvocationStatus.Completed,
                     null
                 ),
             ],

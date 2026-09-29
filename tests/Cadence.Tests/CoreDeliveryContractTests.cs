@@ -232,7 +232,7 @@ public sealed class CoreDeliveryContractTests
         };
     }
 
-    private static IReadOnlyList<StructuredOutputProblem> ReviewProblems(
+    private static IReadOnlyList<ValidationProblem> ReviewProblems(
         CadenceState state,
         ReviewDecisionValue decision,
         IReadOnlyList<ReviewAssessment> assessments

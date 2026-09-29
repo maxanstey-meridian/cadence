@@ -6,7 +6,7 @@ public static class ExecutorPolicies
 {
     public static AgentConversationDecision RetainUntilAcceptedReport(
         AgentMessageContext<CadenceState> context,
-        AgentMessageOutcome _
+        OperationOutcome _
     ) =>
         context.State.ExecutorTransition
             is ExecutorTransition.ReportSubmitted

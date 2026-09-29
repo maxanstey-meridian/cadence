@@ -4,11 +4,16 @@ namespace Cadence.Host;
 
 internal static class PacketReader
 {
-    internal static Packet Read(string path, HostConfiguration? configuration = null)
+    internal static async Task<Packet> ReadAsync(
+        string path,
+        HostConfiguration? configuration = null,
+        CancellationToken cancellationToken = default
+    )
     {
-        PacketFile<Packet> input = PacketFile.Read(
+        PacketFile<Packet> input = await PacketFile.ReadAsync(
             path,
-            new PacketValidator(requireVerification: false)
+            new PacketValidator(requireVerification: false),
+            cancellationToken
         );
         var repository = input.Source.ResolvePath(input.Value.Repository.Trim());
         if (!Directory.Exists(repository))

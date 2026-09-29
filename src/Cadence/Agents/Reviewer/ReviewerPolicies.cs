@@ -6,17 +6,17 @@ public static class ReviewerPolicies
 {
     public static AgentConversationDecision DiscardAfterDecision(
         AgentMessageContext<CadenceState> _,
-        AgentMessageOutcome __
+        OperationOutcome __
     ) => new(AgentConversationRetention.Discard);
 
     public static OutputAcceptancePolicy<CadenceState, ReviewDecision> ContractComplete() =>
         observation =>
         {
-            var problems = new List<StructuredOutputProblem>();
+            var problems = new List<ValidationProblem>();
             if (observation.Tools.All(tool => tool.Evidence != ToolEvidence.RepositoryInspection))
             {
                 problems.Add(
-                    new StructuredOutputProblem(
+                    new ValidationProblem(
                         "$decision",
                         "Your role requires establishing whether the exact candidate completely satisfies the delivery contract. You have not examined any candidate repository evidence in this consultation, so you cannot yet have established that outcome. Examine the repository evidence needed to assess the candidate, then return the decision."
                     )
@@ -50,7 +50,7 @@ public static class ReviewerPolicies
         };
 
     private static void AddCoverage(
-        List<StructuredOutputProblem> problems,
+        List<ValidationProblem> problems,
         string path,
         IReadOnlyList<ReviewAssessment> assessments,
         IEnumerable<string> expected,
