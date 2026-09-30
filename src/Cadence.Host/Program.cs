@@ -218,7 +218,8 @@ internal static class Program
     }
 
     // Active runs are process-owned: a resume never reopens the prior run. It starts a new run,
-    // seeded with the prior run's latest accepted state, in the prior run's retained workspace.
+    // seeded with the prior run's latest accepted state, and moves the prior run's workspace into
+    // it, so each workspace has one owner and a superseded run cannot be resumed again.
     private static async Task<int> ResumeAsync(
         string target,
         string? packetPath,
@@ -236,7 +237,9 @@ internal static class Program
             throw new InvalidOperationException($"Invalid run ID '{target}'.");
         }
         var host = LoadHostConfiguration(home, explicitConfig);
-        var priorLedger = Path.Combine(home, "runs", priorRunId.ToString("N"), "ledger.sqlite3");
+        var priorDirectory = Path.Combine(home, "runs", priorRunId.ToString("N"));
+        var priorWorkspace = Path.Combine(priorDirectory, "workspace");
+        var priorLedger = Path.Combine(priorDirectory, "ledger.sqlite3");
         if (!File.Exists(priorLedger))
         {
             throw new InvalidOperationException($"Run '{priorRunId:N}' does not exist.");
@@ -264,22 +267,37 @@ internal static class Program
             ?? throw new InvalidOperationException(
                 $"Run '{priorRunId:N}' has no accepted Cadence state."
             );
-        if (!IsRunWorkspace(home, retained.WorkspacePath))
+        if (
+            !string.Equals(
+                Path.GetFullPath(retained.WorkspacePath),
+                Path.GetFullPath(priorWorkspace),
+                StringComparison.Ordinal
+            )
+        )
         {
             throw new InvalidOperationException(
-                $"Run '{priorRunId:N}' belongs to workspace '{retained.WorkspacePath}', which is not a Cadence run workspace under '{home}'."
+                $"Run '{priorRunId:N}' belongs to workspace '{retained.WorkspacePath}', not '{priorWorkspace}'."
             );
         }
-        var state = packet is null
-            ? CreateResumeState(retained, instruction)
-            : CreateResumeState(retained, packet);
-        var execution = LoadExecutionConfiguration(host, state.Packet.Repository);
+        if (!Directory.Exists(priorWorkspace))
+        {
+            throw new InvalidOperationException(
+                $"Run '{priorRunId:N}' has no retained workspace; it may already have been resumed by a later run."
+            );
+        }
+        var execution = LoadExecutionConfiguration(host, retained.Packet.Repository);
 
         var runId = Guid.CreateVersion7();
         var runDirectory = Path.Combine(home, "runs", runId.ToString("N"));
+        var workspace = Path.Combine(runDirectory, "workspace");
+        var resumed = retained with { WorkspacePath = workspace };
+        var state = packet is null
+            ? CreateResumeState(resumed, instruction)
+            : CreateResumeState(resumed, packet);
         Directory.CreateDirectory(runDirectory);
         var store = new SqliteLedgerStore(Path.Combine(runDirectory, "ledger.sqlite3"));
         await RecordResumeAsync(store, runId, priorRunId, state, cancellationToken);
+        Directory.Move(priorWorkspace, workspace);
         Console.WriteLine($"Resuming run {priorRunId:N} as run {runId:N}.");
 
         return await ExecuteAsync(
@@ -291,18 +309,6 @@ internal static class Program
             branch,
             cancellationToken
         );
-    }
-
-    internal static bool IsRunWorkspace(string home, string workspace)
-    {
-        var path = Path.GetFullPath(workspace);
-        var runs = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(home, "runs")));
-        return Path.GetFileName(path) == "workspace"
-            && string.Equals(
-                Path.GetDirectoryName(Path.GetDirectoryName(path)),
-                runs,
-                StringComparison.Ordinal
-            );
     }
 
     // The seed makes the new run self-contained: it can be published or resumed, and keeps the

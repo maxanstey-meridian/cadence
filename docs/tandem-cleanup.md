@@ -16,23 +16,22 @@ Branch `slop/tandem-cleanup`, for the owner to review before merging.
 
 - `resume <prior-id>` reads the prior run's latest accepted `CadenceState` (read-only), validates it, loads configuration, and only then creates a **new run** with a new ID under `runs/<new-id>/`.
 - The new run's first journal entry is step `resume` (outcome `resume.accepted`, "Resumed from run '<prior-id>'."). It carries the seeded state as its accepted value, so the new run can be published or resumed even if it stops at once. It also keeps the operator instruction. This replaces the old `resume.operator-instruction` entry.
-- The workspace is not moved. The new run works in `runs/<origin-id>/workspace`, which is where the state's `WorkspacePath` points. The old "workspace must be this run's directory" check is now "workspace must be `<home>/runs/<some-run>/workspace`" (`Program.IsRunWorkspace`), so chains of resumes work. Workspaces outside the home are still rejected.
+- The workspace moves with the delivery: after the seed is recorded, `runs/<prior-id>/workspace` is moved to `runs/<new-id>/workspace`, and the seeded state's `WorkspacePath` points there. Each workspace has one owner, the "workspace must be this run's directory" check is unchanged, and a superseded run cannot be resumed again: its workspace is gone, so `resume <prior-id>` fails before creating a run. Two concurrent resumes of the same run cannot both win the move.
 - The prior run is never modified. It keeps its status (`Ready`, `Failed`, `Interrupted`, or `Running` if its process died) as history.
 
 **User-visible changes**
 
 1. Resume prints `Resuming run <prior> as run <new>.`, and the terminal header shows the new ID. `publish` and a later `resume` take the **new** ID. `publish <prior-id>` still publishes whatever the prior run accepted.
-2. `runs/` gains one directory per resume. It holds only `ledger.sqlite3`. The workspace stays in the original run's directory.
+2. `runs/` gains one directory per resume, holding its `ledger.sqlite3` and the moved workspace. The prior run's directory keeps only its ledger, so resume the latest run in a chain.
 3. A packet, workspace or configuration problem now fails before anything is written. The old behaviour persisted an instruction into the reopened run before a configuration failure. Now the prior run is untouched and you re-run the command.
 4. Agents' ledger tools (`read_ledger`/`search_ledger`) see only the new run's journal. Facts carried forward live in the seeded state ("facts in state"). Earlier raw tool and command output in the prior run's journal is no longer browsable by agents in the resumed run.
 5. `resume --help` now reads "Continue a previous run's delivery in a new run".
 
 **Tests (red first).** In `HostBoundaryTests`:
-- `Resume_starts_a_fresh_run_seeded_from_a_prior_run_in_every_status` (x6 statuses): the prior status and state are unchanged; the new run has the `resume` seed with the instruction, retains the packet commands and workspace, and ends `Failed`.
+- `Resume_starts_a_fresh_run_seeded_from_a_prior_run_in_every_status` (x6 statuses): the prior status and state are unchanged; the workspace moved into the new run, which has the `resume` seed with the instruction, retains the packet commands, and ends `Failed`; resuming the prior run again exits 1 without creating a run or calling a model.
 - `Resume_packet_override_…` reads the new run.
 - `Cross_repository_packet_rejection_starts_no_new_run`.
 - `Resume_rejects_a_ledger_bound_to_another_workspace` also asserts that no new run is created.
-- `Resume_accepts_workspaces_of_any_run_in_the_home_and_nothing_else`.
 
 In `OperatorInstructionResumeTests`:
 - `Configuration_failure_starts_no_run_and_leaves_the_prior_run_untouched` replaces "instruction accepted before configuration failure".

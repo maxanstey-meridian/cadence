@@ -858,33 +858,6 @@ public sealed class HostBoundaryTests
         }
     }
 
-    [Fact]
-    public void Resume_accepts_workspaces_of_any_run_in_the_home_and_nothing_else()
-    {
-        var home = Path.Combine(Path.GetTempPath(), "cadence-home");
-
-        Program
-            .IsRunWorkspace(home, Path.Combine(home, "runs", "origin", "workspace"))
-            .Should()
-            .BeTrue();
-        Program
-            .IsRunWorkspace(
-                home + Path.DirectorySeparatorChar,
-                Path.Combine(home, "runs", "origin", "workspace")
-            )
-            .Should()
-            .BeTrue();
-        Program
-            .IsRunWorkspace(home, Path.Combine(home, "another-run", "workspace"))
-            .Should()
-            .BeFalse();
-        Program
-            .IsRunWorkspace(home, Path.Combine(home, "runs", "origin", "other"))
-            .Should()
-            .BeFalse();
-        Program.IsRunWorkspace(home, Path.Combine(home, "runs", "workspace")).Should().BeFalse();
-    }
-
     private static (Guid RunId, SqliteLedgerStore Store) SingleResumedRun(
         string home,
         Guid priorRunId
@@ -1024,7 +997,7 @@ public sealed class HostBoundaryTests
 
             exitCode.Should().Be(3);
             planner.CallCount.Should().Be(2);
-            Directory.Exists(workspace).Should().BeTrue();
+            Directory.Exists(workspace).Should().BeFalse();
             (await store.GetRunAsync(runId, TestContext.Current.CancellationToken))
                 .Status.Should()
                 .Be(status);
@@ -1038,6 +1011,13 @@ public sealed class HostBoundaryTests
                 .BeNull();
 
             var (resumedRunId, resumedStore) = SingleResumedRun(home, runId);
+            var resumedWorkspace = Path.Combine(
+                home,
+                "runs",
+                resumedRunId.ToString("N"),
+                "workspace"
+            );
+            Directory.Exists(resumedWorkspace).Should().BeTrue();
             (await resumedStore.GetRunAsync(resumedRunId, TestContext.Current.CancellationToken))
                 .Status.Should()
                 .Be(LedgerRunStatus.Failed);
@@ -1057,7 +1037,7 @@ public sealed class HostBoundaryTests
                 TestContext.Current.CancellationToken
             );
             accepted.Should().NotBeNull();
-            accepted!.Value.WorkspacePath.Should().Be(workspace);
+            accepted!.Value.WorkspacePath.Should().Be(resumedWorkspace);
             accepted
                 .Value.Packet.Commands.Should()
                 .Equal(new PacketCommandEntry("retained-command", "retained command"));
@@ -1065,6 +1045,18 @@ public sealed class HostBoundaryTests
                 .Value.Packet.Verification.Should()
                 .Equal(new PacketCommandEntry("retained-verification", "retained verification"));
             accepted.Value.OperatorInstruction.Should().Be("Preserve retained work.");
+
+            var supersededExitCode = await Program.Main([
+                "resume",
+                runId.ToString("N"),
+                "--home",
+                home,
+            ]);
+
+            supersededExitCode.Should().Be(1);
+            planner.CallCount.Should().Be(2);
+            Directory.GetDirectories(Path.Combine(home, "runs")).Should().HaveCount(2);
+            Directory.Exists(resumedWorkspace).Should().BeTrue();
         }
         finally
         {
@@ -1233,8 +1225,12 @@ public sealed class HostBoundaryTests
             exitCode.Should().Be(3);
             planner.CallCount.Should().Be(4);
             executor.CallCount.Should().Be(4);
-            Directory.Exists(workspace).Should().BeTrue();
+            Directory.Exists(workspace).Should().BeFalse();
             var (resumedRunId, resumedStore) = SingleResumedRun(home, runId);
+            Directory
+                .Exists(Path.Combine(home, "runs", resumedRunId.ToString("N"), "workspace"))
+                .Should()
+                .BeTrue();
             var accepted = await resumedStore.ReadLatestAcceptedAsync<CadenceState>(
                 resumedRunId,
                 TestContext.Current.CancellationToken
